@@ -51,7 +51,7 @@ const state=readJson('docs/CURRENT_PRODUCT_STATE.json');
 assert(state.product==='Smarter Navigator','current product identity mismatch');
 assert(state.productVersion===expectedRelease,`current product version mismatch: ${state.productVersion}`);
 assert(state.builderVersion===expectedBuilder,`current builder mismatch: ${state.builderVersion}`);
-assert(state.scope==='SMARTER_NAVIGATOR_ONLY','product scope mismatch');
+assert(/^SMARTER_NAVIGATOR(?:_|$)/.test(String(state.scope||'')),`product scope mismatch: ${state.scope}`);
 assert(state.canonicalPublicOrigin==='https://www.smarternavigator.com','canonical production domain mismatch');
 
 const source=readJson('SOURCE_FILE_MANIFEST.json');
@@ -76,22 +76,6 @@ cp.execFileSync(npm,['--prefix',target,'ci','--omit=dev','--no-audit','--no-fund
 cp.execFileSync(npm,['--prefix',target,'run','deployment:validate'],{stdio:'inherit'});
 cp.execFileSync(npm,['--prefix',target,'run','predeploy:check'],{stdio:'inherit'});
 
-const marker={
-  schemaVersion:'smarter-navigator.render-bootstrap.v1',
-  release:expectedRelease,
-  builder:expectedBuilder,
-  carrier:carrier.name,
-  carrierSha256:carrier.sha256,
-  carrierBytes:carrier.bytes,
-  carrierMembers:memberCount,
-  canonicalSourceTreeSha256:expectedTree,
-  canonicalDomain:'https://www.smarternavigator.com',
-  rogerRuleRecords:rules.ruleCount,
-  activeRogerRules:rules.activeRuleCount,
-  nationalOwnerRule:'HOME-RGR-NATIONAL-009',
-  maximumReasonableOwnerRule:'HOME-RGR-BUILD-VALUE-008',
-  brandOwnerRule:'NAV-RGR-BRAND-012',
-  preparedAt:new Date().toISOString()
-};
+const marker={schemaVersion:'smarter-navigator.render-bootstrap.v2',release:expectedRelease,builder:expectedBuilder,carrier:carrier.name,carrierSha256:carrier.sha256,carrierBytes:carrier.bytes,carrierMembers:memberCount,canonicalSourceTreeSha256:expectedTree,canonicalDomain:'https://www.smarternavigator.com',productScope:state.scope,rogerRuleRecords:rules.ruleCount,activeRogerRules:rules.activeRuleCount,nationalOwnerRule:'HOME-RGR-NATIONAL-009',maximumReasonableOwnerRule:'HOME-RGR-BUILD-VALUE-008',brandOwnerRule:'NAV-RGR-BRAND-012',preparedAt:new Date().toISOString()};
 fs.writeFileSync(path.join(target,'.navigator-render-bootstrap.json'),JSON.stringify(marker,null,2)+'\n');
 console.log(`[NAVIGATOR DEPLOY] verified v${marker.release} / ${marker.builder}; carrier=${marker.carrierSha256}; tree=${marker.canonicalSourceTreeSha256}`);
