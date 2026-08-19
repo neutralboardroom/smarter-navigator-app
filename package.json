@@ -1,0 +1,13 @@
+{
+  "name": "smarter-navigator-render-bootstrap",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Fail-closed Render bootstrap for checksum-locked Smarter Navigator deployment carriers.",
+  "engines": {
+    "node": "22.x"
+  },
+  "scripts": {
+    "build:carrier": "node scripts/bootstrap-navigator-deploy.cjs",
+    "start": "node scripts/start-navigator-deploy.cjs"
+  }
+}
