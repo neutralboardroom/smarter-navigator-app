@@ -1,8 +1,8 @@
 {
   "name": "smarter-navigator-render-bootstrap",
-  "version": "1.0.0",
+  "version": "3.0.0",
   "private": true,
-  "description": "Fail-closed Render bootstrap for checksum-locked Smarter Navigator deployment carriers.",
+  "description": "Fail-closed automatic Render bootstrap for checksum-locked Smarter Navigator deployment carriers.",
   "engines": {
     "node": "22.x"
   },

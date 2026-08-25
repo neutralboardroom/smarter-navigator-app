@@ -23,14 +23,20 @@ assert(/^0\.\d+\.\d+$/.test(expectedRelease),'NAVIGATOR_DEPLOY_RELEASE is requir
 assert(/^NAV\d+\.\d+$/.test(expectedBuilder),'NAVIGATOR_DEPLOY_BUILDER is required');
 assert(/^[a-f0-9]{64}$/.test(expectedTree),'NAVIGATOR_DEPLOY_SOURCE_TREE_SHA256 is required');
 
-const carrierNames=fs.readdirSync(root).filter(n=>/^NAVIGATOR_DEPLOY_RUNTIME(?:\(\d+\))?\.tgz$/.test(n)).sort();
-assert(carrierNames.length>0,'Navigator deployment carrier is missing');
-const inspected=carrierNames.map(name=>{const file=path.join(root,name);const st=fs.statSync(file);return {name,file,bytes:st.size,sha256:sha(file)}});
-const matches=inspected.filter(x=>x.bytes===expectedBytes&&x.sha256===expectedSha256);
-assert(matches.length>0,`no carrier matches expected bytes/SHA-256; found ${inspected.map(x=>`${x.name}:${x.bytes}:${x.sha256}`).join(', ')}`);
-const carrier=matches[0];
+const partRoot=path.join(root,'carrier-v057');
+assert(fs.existsSync(partRoot),'Navigator v0.57 carrier parts are missing');
+const partNames=fs.readdirSync(partRoot).filter(n=>/^NAVIGATOR_DEPLOY_RUNTIME_TXZ\.part\d{3}$/.test(n)).sort();
+assert(partNames.length>0,'Navigator v0.57 carrier part set is empty');
+for(let i=0;i<partNames.length;i++)assert(partNames[i]===`NAVIGATOR_DEPLOY_RUNTIME_TXZ.part${String(i).padStart(3,'0')}`,`carrier part sequence gap at ${i}`);
+const encoded=partNames.map(name=>fs.readFileSync(path.join(partRoot,name),'utf8')).join('').replace(/\s+/g,'');
+const carrierFile=path.join(root,'.runtime','NAVIGATOR_DEPLOY_RUNTIME.txz');
+fs.mkdirSync(path.dirname(carrierFile),{recursive:true});
+fs.writeFileSync(carrierFile,Buffer.from(encoded,'base64'));
+const carrier={name:'NAVIGATOR_DEPLOY_RUNTIME.txz',file:carrierFile,bytes:fs.statSync(carrierFile).size,sha256:sha(carrierFile)};
+assert(carrier.bytes===expectedBytes,`carrier byte mismatch: ${carrier.bytes} != ${expectedBytes}`);
+assert(carrier.sha256===expectedSha256,`carrier SHA-256 mismatch: ${carrier.sha256} != ${expectedSha256}`);
 
-const members=cp.execFileSync('tar',['-tzf',carrier.file],{encoding:'utf8',maxBuffer:128*1024*1024});
+const members=cp.execFileSync('tar',['-tJf',carrier.file],{encoding:'utf8',maxBuffer:128*1024*1024});
 let memberCount=0;
 for(const raw of members.split(/\r?\n/)){
   const name=raw.trim(); if(!name) continue; memberCount++;
@@ -42,11 +48,13 @@ assert(memberCount>100&&memberCount<5000,`unexpected carrier member count: ${mem
 
 fs.rmSync(target,{recursive:true,force:true});
 fs.mkdirSync(target,{recursive:true});
-cp.execFileSync('tar',['-xzf',carrier.file,'-C',target],{stdio:'inherit'});
+cp.execFileSync('tar',['-xJf',carrier.file,'-C',target],{stdio:'inherit'});
 
 const pkg=readJson('package.json');
 assert(pkg.name==='smarter-navigator',`unexpected runtime package identity: ${pkg.name}`);
 assert(pkg.version===expectedRelease,`runtime version mismatch: ${pkg.version} != ${expectedRelease}`);
+const lock=readJson('package-lock.json');
+assert(Object.keys(lock.packages||{}).length===1&&!pkg.dependencies&&!pkg.devDependencies,'runtime dependency boundary changed; explicit dependency qualification required');
 const state=readJson('docs/CURRENT_PRODUCT_STATE.json');
 assert(state.product==='Smarter Navigator','current product identity mismatch');
 assert(state.productVersion===expectedRelease,`current product version mismatch: ${state.productVersion}`);
@@ -65,17 +73,15 @@ assert(deployId.canonicalSourceTreeSha256===expectedTree,'deployment source tree
 assert(deployId.sisterProductRepositoryReuse===false,'sister-product repository reuse must be false');
 
 const rules=readJson('governance/CANONICAL_ROGER_RULES_REGISTER.json');
-assert(Number(rules.ruleCount)===382&&Number(rules.activeRuleCount)===381,'Roger Rule count mismatch');
+assert(Number(rules.ruleCount)===450&&Number(rules.activeRuleCount)===449,'Roger Rule count mismatch');
 const byId=new Map((rules.rules||[]).map(r=>[r.id,r]));
-for(const id of ['HOME-RGR-BUILD-VALUE-008','HOME-RGR-NATIONAL-009','HOME-RGR-NATIONAL-010','HOME-RGR-NATIONAL-011','NAV-RGR-BRAND-012']) assert(byId.get(id)?.active===true,`required active Roger Rule missing: ${id}`);
+for(const id of ['HOME-RGR-BUILD-VALUE-008','HOME-RGR-NATIONAL-009','HOME-RGR-NATIONAL-010','HOME-RGR-NATIONAL-011','NAV-RGR-BRAND-012','NAV-RGR-080']) assert(byId.get(id)?.active===true,`required active Roger Rule missing: ${id}`);
 
 for(const rel of ['server.js','public/home/index.html','public/home/navigator/index.html','public/home/professionals/index.html','public/home/professionals/membership/index.html','public/home/professionals/state-readiness/index.html']) assert(fs.existsSync(path.join(target,rel)),`missing deploy-critical surface: ${rel}`);
 cp.execFileSync(process.execPath,['--check',path.join(target,'server.js')],{stdio:'inherit'});
-const npm=process.platform==='win32'?'npm.cmd':'npm';
-cp.execFileSync(npm,['--prefix',target,'ci','--omit=dev','--no-audit','--no-fund','--ignore-scripts'],{stdio:'inherit',env:{...process.env,NPM_CONFIG_AUDIT:'false',NPM_CONFIG_FUND:'false'}});
-cp.execFileSync(npm,['--prefix',target,'run','deployment:validate'],{stdio:'inherit'});
-cp.execFileSync(npm,['--prefix',target,'run','predeploy:check'],{stdio:'inherit'});
+cp.execFileSync(process.execPath,[path.join(target,'scripts','validate-deployment-source.mjs')],{stdio:'inherit'});
+cp.execFileSync(process.execPath,[path.join(target,'scripts','predeploy-check.mjs')],{stdio:'inherit'});
 
-const marker={schemaVersion:'smarter-navigator.render-bootstrap.v2',release:expectedRelease,builder:expectedBuilder,carrier:carrier.name,carrierSha256:carrier.sha256,carrierBytes:carrier.bytes,carrierMembers:memberCount,canonicalSourceTreeSha256:expectedTree,canonicalDomain:'https://www.smarternavigator.com',productScope:state.scope,rogerRuleRecords:rules.ruleCount,activeRogerRules:rules.activeRuleCount,nationalOwnerRule:'HOME-RGR-NATIONAL-009',maximumReasonableOwnerRule:'HOME-RGR-BUILD-VALUE-008',brandOwnerRule:'NAV-RGR-BRAND-012',preparedAt:new Date().toISOString()};
-fs.writeFileSync(path.join(target,'.navigator-render-bootstrap.json'),JSON.stringify(marker,null,2)+'\n');
+const marker={schemaVersion:'smarter-navigator.render-bootstrap.v3',release:expectedRelease,builder:expectedBuilder,carrier:carrier.name,carrierEncoding:'BASE64_PARTS_TXZ',carrierPartCount:partNames.length,carrierSha256:carrier.sha256,carrierBytes:carrier.bytes,carrierMembers:memberCount,canonicalSourceTreeSha256:expectedTree,canonicalDomain:'https://www.smarternavigator.com',productScope:state.scope,rogerRuleRecords:rules.ruleCount,activeRogerRules:rules.activeRuleCount,nationalOwnerRule:'HOME-RGR-NATIONAL-009',maximumReasonableOwnerRule:'HOME-RGR-BUILD-VALUE-008',selfAuditOwnerRule:'NAV-RGR-080',brandOwnerRule:'NAV-RGR-BRAND-012',preparedAt:new Date().toISOString()};
+fs.writeFileSync(path.join(root,'.runtime','.navigator-render-bootstrap.json'),JSON.stringify(marker,null,2)+'\n');
 console.log(`[NAVIGATOR DEPLOY] verified v${marker.release} / ${marker.builder}; carrier=${marker.carrierSha256}; tree=${marker.canonicalSourceTreeSha256}`);
