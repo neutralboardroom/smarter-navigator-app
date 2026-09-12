@@ -3,9 +3,8 @@ import os
 import re
 import threading
 import time
-from copy import deepcopy
 from datetime import datetime, timezone
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 import requests
 from bs4 import BeautifulSoup
@@ -19,6 +18,11 @@ CONFIG_PATH = os.environ.get(
     "PROSPECT_CONFIG_PATH",
     os.path.join(os.path.dirname(__file__), "prospects.json"),
 )
+
+PROFILE_FIELD_ID = 150607
+PROFILE_ID_FIELD_ID = 151134
+GREETING_FIELD_ID = 151137
+LINK_STATE_FIELD_ID = 151138
 
 PROFILE_FIELD = "Profile URL"
 PROFILE_ID_FIELD = "Franklin Profile ID"
@@ -34,7 +38,7 @@ GENERIC_FRANKLIN_PATHS = {
     "/",
 }
 
-app = FastAPI(title="SRE Reply Profile Bridge", version="1.0.0")
+app = FastAPI(title="SRE Reply Profile Bridge", version="1.1.0")
 _state_lock = threading.Lock()
 _state = {
     "lastRunAt": None,
@@ -93,6 +97,17 @@ def normalize_text(value):
     return re.sub(r"\s+", " ", (value or "")).strip().lower()
 
 
+def claim_link_matches(href, profile_id):
+    if not href:
+        return False
+    parsed = urlparse(href)
+    if parsed.netloc and parsed.netloc != "franklinnavigator.com":
+        return False
+    if parsed.path.rstrip("/") != "/claim-profile":
+        return False
+    return parse_qs(parsed.query).get("profile", [None])[0] == profile_id
+
+
 def verify_profile(prospect):
     url = prospect["profileUrl"]
     profile_id = prospect["profileId"]
@@ -115,11 +130,10 @@ def verify_profile(prospect):
     heading = soup.find("h1")
     h1 = normalize_text(heading.get_text(" ", strip=True) if heading else "")
     expected_business = normalize_text(business)
-    if expected_business not in h1 and h1 not in expected_business:
+    if not h1 or (expected_business not in h1 and h1 not in expected_business):
         return False, f"PROFILE_NAME_MISMATCH:{h1}"
 
-    claim_href = f"/claim-profile/?profile={profile_id}"
-    if not soup.find("a", href=claim_href):
+    if not any(claim_link_matches(a.get("href"), profile_id) for a in soup.find_all("a")):
         return False, "PROFILE_CLAIM_ACTION_MISSING"
 
     return True, "PASS"
@@ -127,16 +141,6 @@ def verify_profile(prospect):
 
 def contact_get(contact_id):
     return api("GET", f"/contacts/{contact_id}")
-
-
-def merge_custom_fields(contact, values):
-    current = {}
-    for item in contact.get("customFields") or []:
-        key = item.get("key")
-        if key:
-            current[key] = str(item.get("value") or "")
-    current.update(values)
-    return [{"key": key, "value": value} for key, value in current.items()]
 
 
 def update_contact(prospect, state_value):
@@ -152,15 +156,12 @@ def update_contact(prospect, state_value):
     if not greeting:
         raise RuntimeError(f"EMPTY_OUTREACH_GREETING:{prospect['contactId']}")
 
-    custom_fields = merge_custom_fields(
-        contact,
-        {
-            PROFILE_FIELD: prospect["profileUrl"],
-            PROFILE_ID_FIELD: prospect["profileId"],
-            GREETING_FIELD: greeting,
-            LINK_STATE_FIELD: state_value,
-        },
-    )
+    custom_fields = [
+        {"id": PROFILE_FIELD_ID, "value": prospect["profileUrl"]},
+        {"id": PROFILE_ID_FIELD_ID, "value": prospect["profileId"]},
+        {"id": GREETING_FIELD_ID, "value": greeting},
+        {"id": LINK_STATE_FIELD_ID, "value": state_value},
+    ]
 
     payload = {
         "firstName": contact.get("firstName") or prospect["business"],
@@ -172,18 +173,27 @@ def update_contact(prospect, state_value):
 def exact_profile_only_body(body):
     text = body or ""
 
-    # Always use the verified SRE greeting field rather than Reply's raw First Name.
-    text = re.sub(
-        r"(?im)^\s*(hi|hello|hey)\s+(?:\{\{[^}\n]+\}\}|[^,\n]{1,100}),\s*$",
-        r"Hi {{Outreach_Greeting}},",
+    # Reply converts spaces in custom-field names to underscores in template variables.
+    greeting_var = "{{Outreach_Greeting}}"
+    profile_var = "{{Profile_URL}}"
+
+    # Replace the opening greeting without ever guessing a person's name.
+    text, replaced = re.subn(
+        r"(?is)^\s*(?:<p>\s*)?(?:hi|hello|hey)(?:\s+[^,<\r\n]{1,100})?,?",
+        f"Hi {greeting_var},",
         text,
         count=1,
     )
-    if not re.search(r"(?im)^\s*Hi \{\{Outreach_Greeting\}\},\s*$", text):
-        text = "Hi {{Outreach_Greeting}},\n\n" + text.lstrip()
+    if not replaced:
+        separator = "<br><br>" if "<br" in text.lower() else "\n\n"
+        text = f"Hi {greeting_var},{separator}" + text.lstrip()
 
-    # A prospecting email may have only one Franklin commercial/action destination:
-    # that prospect's exact live profile URL. Never fall back to a generic member page.
+    text = re.sub(
+        r"(?i)You can(?: also)? learn more here:",
+        "Review your Franklin Navigator profile, claim or manage it, and see the optional Community Membership path here:",
+        text,
+    )
+
     franklin_url = re.compile(
         r"https://franklinnavigator\.com(?P<path>/[^\s<>\"]*)?", re.I
     )
@@ -192,35 +202,37 @@ def exact_profile_only_body(body):
         raw_path = match.group("path") or "/"
         path_only = raw_path.split("?", 1)[0].split("#", 1)[0]
         if path_only.startswith("/profiles/"):
-            return "{{Profile_URL}}"
+            return profile_var
         if (
             path_only in GENERIC_FRANKLIN_PATHS
             or path_only.startswith("/membership-")
             or path_only.startswith("/business-membership")
         ):
-            return "{{Profile_URL}}"
+            return profile_var
         return "__FRANKLIN_LINK_BLOCKED__"
 
     text = franklin_url.sub(replace_franklin_url, text)
     if "__FRANKLIN_LINK_BLOCKED__" in text:
         raise RuntimeError("TEMPLATE_CONTAINS_NON_PROFILE_FRANKLIN_LINK")
 
-    if "{{Profile_URL}}" not in text:
+    if profile_var not in text:
+        separator = "<br><br>" if "<br" in text.lower() else "\n\n"
         text = (
             text.rstrip()
-            + "\n\nView your Franklin Navigator profile:\n{{Profile_URL}}\n"
+            + separator
+            + "Review your Franklin Navigator profile, claim or manage it, and see the optional Community Membership path here:"
+            + ("<br>" if "<br" in text.lower() else "\n")
+            + profile_var
         )
 
-    # Keep exactly one profile destination in a shared template.
-    seen = False
-    output = []
-    for line in text.splitlines():
-        if "{{Profile_URL}}" in line:
-            if seen:
-                continue
-            seen = True
-        output.append(line)
-    return "\n".join(output)
+    # Keep only one exact-profile destination per message.
+    first = text.find(profile_var)
+    if first >= 0:
+        before = text[: first + len(profile_var)]
+        after = text[first + len(profile_var) :].replace(profile_var, "")
+        text = before + after
+
+    return text
 
 
 def get_sequence():
@@ -233,58 +245,49 @@ def update_email_steps():
     changed = False
 
     for step in steps:
-        if step.get("type") != "Email":
+        if str(step.get("type") or "").lower() != "email":
             continue
+
         step_id = step["id"]
         email_template = ((step.get("template") or {}).get("emailTemplate") or {})
-        execution_mode = email_template.get("executionMode") or "Automatic"
-        templates = email_template.get("templates") or step.get("templates") or []
+        templates = email_template.get("templates") or []
         if not templates:
             raise RuntimeError(f"EMAIL_STEP_{step_id}_HAS_NO_TEMPLATES")
 
-        new_templates = []
+        variants = []
         step_changed = False
         for template in templates:
-            updated = deepcopy(template)
-            body_key = "body" if "body" in updated else "message"
-            if body_key not in updated:
-                raise RuntimeError(f"EMAIL_STEP_{step_id}_TEMPLATE_HAS_NO_BODY")
-            new_body = exact_profile_only_body(updated.get(body_key) or "")
-            if new_body != updated.get(body_key):
-                updated[body_key] = new_body
+            variant_id = template.get("variantId") or template.get("id")
+            if not variant_id:
+                raise RuntimeError(f"EMAIL_STEP_{step_id}_VARIANT_HAS_NO_ID")
+            old_body = template.get("body") or template.get("message") or ""
+            new_body = exact_profile_only_body(old_body)
+            if new_body != old_body:
                 step_changed = True
-            new_templates.append(updated)
-
-        if step_changed:
-            payload_templates = []
-            for template in new_templates:
-                payload_templates.append(
-                    {
-                        key: value
-                        for key, value in template.items()
-                        if key
-                        in {
-                            "id",
-                            "variantId",
-                            "subject",
-                            "body",
-                            "message",
-                            "templateId",
-                            "emailTemplateId",
-                            "isEnabled",
-                        }
-                    }
-                )
-            api(
-                "PATCH",
-                f"/sequences/{SEQUENCE_ID}/steps/{step_id}",
-                json={
-                    "type": "Email",
-                    "executionMode": execution_mode,
-                    "templates": payload_templates,
-                },
+            variants.append(
+                {
+                    "id": variant_id,
+                    "subject": template.get("subject") or "",
+                    "message": new_body,
+                    "attachmentIds": template.get("attachmentIds") or [],
+                }
             )
-            changed = True
+
+        if not step_changed:
+            continue
+
+        payload = {
+            "type": "email",
+            "delayInMinutes": int(step.get("delayInMinutes") or 0),
+            "variants": variants,
+        }
+        if step.get("parentId") is not None:
+            payload["parentId"] = step.get("parentId")
+        if step.get("ifConditionPositive") is not None:
+            payload["ifConditionPositive"] = bool(step.get("ifConditionPositive"))
+
+        api("PUT", f"/sequences/{SEQUENCE_ID}/steps/{step_id}", json=payload)
+        changed = True
 
     return changed
 
@@ -301,8 +304,11 @@ def sync_once():
         if not ok:
             try:
                 update_contact(prospect, f"HOLD:{reason}")
-            except Exception:
-                pass
+            except Exception as hold_exc:
+                print(
+                    f"SRE_BRIDGE hold-write-failed contact={prospect['contactId']} error={hold_exc}",
+                    flush=True,
+                )
             held.append(
                 {
                     "contactId": prospect["contactId"],
@@ -315,7 +321,6 @@ def sync_once():
         update_contact(prospect, "READY_EXACT_PROFILE_BOUND")
         ready += 1
 
-    # Never alter templates while a configured send candidate has an unresolved exact-profile issue.
     template_updated = False
     if not held:
         template_updated = update_email_steps()
@@ -335,6 +340,21 @@ def sync_once():
     }
     with _state_lock:
         _state.update(result)
+    print(
+        "SRE_BRIDGE sync "
+        + json.dumps(
+            {
+                "outcome": outcome,
+                "processed": processed,
+                "ready": ready,
+                "held": len(held),
+                "replacementNeeded": result["replacementNeeded"],
+                "templateUpdated": template_updated,
+            },
+            sort_keys=True,
+        ),
+        flush=True,
+    )
     return result
 
 
@@ -343,19 +363,25 @@ def runner():
         try:
             sync_once()
         except Exception as exc:
+            error = str(exc)
             with _state_lock:
                 _state.update(
                     {
                         "lastRunAt": now_iso(),
                         "lastOutcome": "ERROR",
-                        "error": str(exc),
+                        "error": error,
                     }
                 )
+            print(f"SRE_BRIDGE ERROR {error}", flush=True)
         time.sleep(SYNC_INTERVAL_SECONDS)
 
 
 @app.on_event("startup")
 def startup():
+    print(
+        f"SRE_BRIDGE startup apiKeyConfigured={bool(REPLY_API_KEY)} sequenceId={SEQUENCE_ID}",
+        flush=True,
+    )
     threading.Thread(target=runner, daemon=True).start()
 
 
