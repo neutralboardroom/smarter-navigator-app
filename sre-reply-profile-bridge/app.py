@@ -19,6 +19,16 @@ CONFIG_PATH = os.environ.get(
     os.path.join(os.path.dirname(__file__), "prospects.json"),
 )
 
+OWNER_TEST_ON_STARTUP = os.environ.get("OWNER_TEST_ON_STARTUP", "").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+}
+OWNER_TEST_CONTACT_ID = int(os.environ.get("OWNER_TEST_CONTACT_ID", "0") or 0)
+OWNER_TEST_EMAIL_ACCOUNT_ID = int(os.environ.get("OWNER_TEST_EMAIL_ACCOUNT_ID", "0") or 0)
+OWNER_TEST_SUBJECT = os.environ.get("OWNER_TEST_SUBJECT", "").strip()
+OWNER_TEST_BODY = os.environ.get("OWNER_TEST_BODY", "")
+
 PROFILE_FIELD_ID = 150607
 PROFILE_ID_FIELD_ID = 151134
 GREETING_FIELD_ID = 151137
@@ -38,7 +48,7 @@ GENERIC_FRANKLIN_PATHS = {
     "/",
 }
 
-app = FastAPI(title="SRE Reply Profile Bridge", version="1.1.3")
+app = FastAPI(title="SRE Reply Profile Bridge", version="1.2.0")
 _state_lock = threading.Lock()
 _state = {
     "lastRunAt": None,
@@ -50,6 +60,13 @@ _state = {
     "replacementNeeded": 0,
     "templateUpdated": False,
     "error": None,
+    "ownerTest": {
+        "enabled": OWNER_TEST_ON_STARTUP,
+        "status": "NOT_REQUESTED" if not OWNER_TEST_ON_STARTUP else "PENDING",
+        "sentAt": None,
+        "messageId": None,
+        "error": None,
+    },
 }
 
 
@@ -337,6 +354,66 @@ def update_email_steps():
     return changed
 
 
+def send_owner_test_once():
+    if not OWNER_TEST_ON_STARTUP:
+        return
+
+    if OWNER_TEST_CONTACT_ID <= 0:
+        error = "OWNER_TEST_CONTACT_ID is required"
+    elif OWNER_TEST_EMAIL_ACCOUNT_ID <= 0:
+        error = "OWNER_TEST_EMAIL_ACCOUNT_ID is required"
+    elif not OWNER_TEST_SUBJECT:
+        error = "OWNER_TEST_SUBJECT is required"
+    elif not OWNER_TEST_BODY.strip():
+        error = "OWNER_TEST_BODY is required"
+    else:
+        error = None
+
+    if error:
+        with _state_lock:
+            _state["ownerTest"].update({"status": "ERROR", "error": error})
+        print(f"SRE_BRIDGE OWNER_TEST ERROR {error}", flush=True)
+        return
+
+    try:
+        result = api(
+            "POST",
+            f"/contacts/{OWNER_TEST_CONTACT_ID}/send-direct-email",
+            json={
+                "subject": OWNER_TEST_SUBJECT,
+                "body": OWNER_TEST_BODY,
+                "emailAccountId": OWNER_TEST_EMAIL_ACCOUNT_ID,
+            },
+        ) or {}
+        sent_at = now_iso()
+        with _state_lock:
+            _state["ownerTest"].update(
+                {
+                    "status": str(result.get("status") or "SENT").upper(),
+                    "sentAt": sent_at,
+                    "messageId": result.get("messageId"),
+                    "error": None,
+                }
+            )
+        print(
+            "SRE_BRIDGE OWNER_TEST SENT "
+            + json.dumps(
+                {
+                    "status": result.get("status"),
+                    "messageId": result.get("messageId"),
+                    "sentAt": sent_at,
+                },
+                sort_keys=True,
+            ),
+            flush=True,
+        )
+    except Exception as exc:
+        error = str(exc)
+        with _state_lock:
+            _state["ownerTest"].update({"status": "ERROR", "error": error})
+        print(f"SRE_BRIDGE OWNER_TEST ERROR {error}", flush=True)
+
+
 def sync_once():
     config = load_config()
     held = []
@@ -428,6 +505,8 @@ def startup():
         flush=True,
     )
     threading.Thread(target=runner, daemon=True).start()
+    if OWNER_TEST_ON_STARTUP:
+        threading.Thread(target=send_owner_test_once, daemon=True).start()
 
 
 @app.get("/health")
