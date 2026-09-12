@@ -18,6 +18,10 @@ CONFIG_PATH = os.environ.get(
     "PROSPECT_CONFIG_PATH",
     os.path.join(os.path.dirname(__file__), "prospects.json"),
 )
+CAMPAIGN_COPY_PATH = os.environ.get(
+    "CAMPAIGN_COPY_PATH",
+    os.path.join(os.path.dirname(__file__), "campaign_copy.json"),
+)
 
 OWNER_TEST_ON_STARTUP = os.environ.get("OWNER_TEST_ON_STARTUP", "").strip().lower() in {
     "1",
@@ -48,7 +52,7 @@ GENERIC_FRANKLIN_PATHS = {
     "/",
 }
 
-app = FastAPI(title="SRE Reply Profile Bridge", version="1.2.0")
+app = FastAPI(title="SRE Reply Profile Bridge", version="1.3.0")
 _state_lock = threading.Lock()
 _state = {
     "lastRunAt": None,
@@ -59,6 +63,7 @@ _state = {
     "held": [],
     "replacementNeeded": 0,
     "templateUpdated": False,
+    "campaignCopyVersion": None,
     "error": None,
     "ownerTest": {
         "enabled": OWNER_TEST_ON_STARTUP,
@@ -107,6 +112,20 @@ def load_config():
         data = json.load(f)
     if data.get("sequenceId") and int(data["sequenceId"]) != SEQUENCE_ID:
         raise RuntimeError("Configured sequenceId does not match REPLY_SEQUENCE_ID")
+    return data
+
+
+def load_campaign_copy():
+    with open(CAMPAIGN_COPY_PATH, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    if data.get("sequenceId") and int(data["sequenceId"]) != SEQUENCE_ID:
+        raise RuntimeError("Campaign copy sequenceId does not match REPLY_SEQUENCE_ID")
+    emails = data.get("emails") or []
+    if len(emails) != 4:
+        raise RuntimeError(f"CAMPAIGN_COPY_REQUIRES_4_EMAILS:{len(emails)}")
+    for index, email in enumerate(emails, start=1):
+        if not str(email.get("message") or "").strip():
+            raise RuntimeError(f"CAMPAIGN_COPY_EMAIL_{index}_EMPTY")
     return data
 
 
@@ -296,48 +315,56 @@ def extract_email_step(step):
 def update_email_steps():
     sequence = get_sequence()
     steps = sequence.get("steps") or []
+    email_steps = [
+        step for step in steps if str(step.get("type") or "").lower() == "email"
+    ]
+    campaign_copy = load_campaign_copy()
+    campaign_emails = campaign_copy["emails"]
+
+    if len(email_steps) != len(campaign_emails):
+        raise RuntimeError(
+            f"SEQUENCE_EMAIL_STEP_COUNT_MISMATCH:{len(email_steps)}:{len(campaign_emails)}"
+        )
+
     changed = False
-
-    for step in steps:
-        if str(step.get("type") or "").lower() != "email":
-            continue
-
+    for index, step in enumerate(email_steps):
         step_id = step["id"]
         execution_mode, templates = extract_email_step(step)
         if not templates:
             raise RuntimeError(f"EMAIL_STEP_{step_id}_HAS_NO_TEMPLATES")
+        if len(templates) != 1:
+            raise RuntimeError(f"EMAIL_STEP_{step_id}_EXPECTED_ONE_VARIANT:{len(templates)}")
 
-        updated_variants = []
-        step_changed = False
-        for template in templates:
-            variant_id = template.get("variantId") or template.get("id")
-            if not variant_id:
-                raise RuntimeError(f"EMAIL_STEP_{step_id}_VARIANT_HAS_NO_ID")
-            old_body = template.get("body") or template.get("message") or ""
-            new_body = exact_profile_only_body(old_body)
-            if new_body != old_body:
-                step_changed = True
+        desired = campaign_emails[index]
+        desired_subject = str(desired.get("subject") or "")
+        desired_body = exact_profile_only_body(str(desired.get("message") or ""))
 
-            item = {
-                "id": variant_id,
-                "subject": template.get("subject") or "",
-                "message": new_body,
-            }
-            email_template_id = template.get("emailTemplateId") or template.get("templateId")
-            if email_template_id is not None:
-                item["emailTemplateId"] = email_template_id
-            if template.get("attachmentIds") is not None:
-                item["attachmentIds"] = template.get("attachmentIds") or []
-            updated_variants.append(item)
+        template = templates[0]
+        variant_id = template.get("variantId") or template.get("id")
+        if not variant_id:
+            raise RuntimeError(f"EMAIL_STEP_{step_id}_VARIANT_HAS_NO_ID")
 
-        if not step_changed:
+        old_subject = str(template.get("subject") or "")
+        old_body = template.get("body") or template.get("message") or ""
+        if old_subject == desired_subject and old_body == desired_body:
             continue
+
+        item = {
+            "id": variant_id,
+            "subject": desired_subject,
+            "message": desired_body,
+        }
+        email_template_id = template.get("emailTemplateId") or template.get("templateId")
+        if email_template_id is not None:
+            item["emailTemplateId"] = email_template_id
+        if template.get("attachmentIds") is not None:
+            item["attachmentIds"] = template.get("attachmentIds") or []
 
         payload = {
             "type": "Email",
             "delayInMinutes": int(step.get("delayInMinutes") or 0),
             "executionMode": execution_mode,
-            "variants": updated_variants,
+            "variants": [item],
         }
         if step.get("parentId") is not None:
             payload["parentId"] = step.get("parentId")
@@ -351,6 +378,8 @@ def update_email_steps():
         )
         changed = True
 
+    with _state_lock:
+        _state["campaignCopyVersion"] = campaign_copy.get("version")
     return changed
 
 
@@ -472,6 +501,7 @@ def sync_once():
                 "held": len(held),
                 "replacementNeeded": result["replacementNeeded"],
                 "templateUpdated": template_updated,
+                "campaignCopyVersion": _state.get("campaignCopyVersion"),
             },
             sort_keys=True,
         ),
