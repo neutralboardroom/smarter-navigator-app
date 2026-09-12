@@ -38,7 +38,7 @@ GENERIC_FRANKLIN_PATHS = {
     "/",
 }
 
-app = FastAPI(title="SRE Reply Profile Bridge", version="1.1.1")
+app = FastAPI(title="SRE Reply Profile Bridge", version="1.1.2")
 _state_lock = threading.Lock()
 _state = {
     "lastRunAt": None,
@@ -172,7 +172,6 @@ def update_contact(prospect, state_value):
 
 def exact_profile_only_body(body):
     text = body or ""
-
     greeting_var = "{{Outreach_Greeting}}"
     profile_var = "{{Profile_URL}}"
 
@@ -315,7 +314,7 @@ def update_email_steps():
             continue
 
         api(
-            "PATCH",
+            "PUT",
             f"/sequences/{SEQUENCE_ID}/steps/{step_id}",
             json={
                 "type": "Email",
