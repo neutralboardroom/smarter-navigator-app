@@ -1,0 +1,24 @@
+{
+  "version": "2026-09-12.1",
+  "campaign": "Franklin Navigator Community Outreach",
+  "sequenceId": 1768444,
+  "positioning": "Present Franklin Navigator as an established Franklin-focused community resource. Do not use launch, new-service, early-adopter, first-wave, or special-origin-member language, and do not make unsupported claims about how long the service has existed.",
+  "emails": [
+    {
+      "subject": "Your Franklin Navigator profile",
+      "message": "Hi {{Outreach_Greeting}},<br><br>Franklin Navigator is a local community resource focused on helping Franklin residents discover and connect with local businesses, professionals, organizations, and services.<br><br>Your business has a Franklin Navigator profile with useful public information to help local residents find you and understand what you offer.<br><br>Keeping your basic factual information accurate is free. You can request corrections or ask us to remove your profile from public view at no cost.<br><br>If you'd like to enhance your presence, optional Franklin Navigator Community Membership is $35/year and renews annually until canceled. Membership gives you tools to make your profile more complete and useful to local residents, improve your local visibility, and support business growth.<br><br>Review your Franklin Navigator profile, claim or manage it, and see the optional Community Membership path here:<br>{{Profile_URL}}<br><br>If you have any questions, just reply to this email. I'd be happy to help you review your profile or explain what Community Membership adds."
+    },
+    {
+      "subject": "",
+      "message": "Hi {{Outreach_Greeting}},<br><br>Just following up about your Franklin Navigator profile.<br><br>Franklin Navigator is focused on making it easier for Franklin residents to discover and connect with local businesses, professionals, organizations, and services in the community.<br><br>Your basic profile information and factual corrections remain free, and you can request removal from public view at no cost.<br><br>Optional Community Membership is $35/year and renews annually until canceled. It gives you tools to enhance your profile, provide more useful information to local residents, increase local visibility, and support business growth.<br><br>Review your Franklin Navigator profile, claim or manage it, and see the optional Community Membership path here:<br>{{Profile_URL}}<br><br>If you'd like, just reply and I can help you review what's currently shown or answer any questions about membership."
+    },
+    {
+      "subject": "",
+      "message": "Hi {{Outreach_Greeting}},<br><br>One reason Franklin Navigator can be useful is its local focus: the goal is to help Franklin residents find relevant businesses, professionals, organizations, services, and community resources in one place.<br><br>There is no charge to keep your basic factual profile information accurate. You can also request corrections or ask us to remove your profile from public view at no cost.<br><br>Community Membership is optional for businesses that want to do more with their presence, including enhancing the profile, sharing more useful information with local residents, improving local visibility, and using additional business-growth tools.<br><br>Review your Franklin Navigator profile, claim or manage it, and see the optional Community Membership path here:<br>{{Profile_URL}}<br><br>If you have questions, simply reply and I can help."
+    },
+    {
+      "subject": "",
+      "message": "Hi {{Outreach_Greeting}},<br><br>I wanted to send one final follow-up about your Franklin Navigator profile.<br><br>Franklin Navigator helps Franklin residents discover and connect with local businesses, professionals, organizations, services, and community resources.<br><br>Your basic profile information and factual corrections remain free, and you can request removal from public view at no cost.<br><br>If you'd like to build a stronger presence on Franklin Navigator, Community Membership is optional at $35/year and renews annually until canceled. Membership provides tools to enhance your profile, make it more useful to local residents, improve local visibility, and support business growth.<br><br>Review your Franklin Navigator profile, claim or manage it, and see the optional Community Membership path here:<br>{{Profile_URL}}<br><br>If you'd like help reviewing your profile or understanding what Community Membership adds, simply reply to this email."
+    }
+  ]
+}
