@@ -38,7 +38,7 @@ GENERIC_FRANKLIN_PATHS = {
     "/",
 }
 
-app = FastAPI(title="SRE Reply Profile Bridge", version="1.1.2")
+app = FastAPI(title="SRE Reply Profile Bridge", version="1.1.3")
 _state_lock = threading.Lock()
 _state = {
     "lastRunAt": None,
@@ -290,7 +290,7 @@ def update_email_steps():
         if not templates:
             raise RuntimeError(f"EMAIL_STEP_{step_id}_HAS_NO_TEMPLATES")
 
-        updated_templates = []
+        updated_variants = []
         step_changed = False
         for template in templates:
             variant_id = template.get("variantId") or template.get("id")
@@ -304,23 +304,33 @@ def update_email_steps():
             item = {
                 "id": variant_id,
                 "subject": template.get("subject") or "",
-                "body": new_body,
+                "message": new_body,
             }
-            if template.get("templateId") is not None:
-                item["templateId"] = template.get("templateId")
-            updated_templates.append(item)
+            email_template_id = template.get("emailTemplateId") or template.get("templateId")
+            if email_template_id is not None:
+                item["emailTemplateId"] = email_template_id
+            if template.get("attachmentIds") is not None:
+                item["attachmentIds"] = template.get("attachmentIds") or []
+            updated_variants.append(item)
 
         if not step_changed:
             continue
 
+        payload = {
+            "type": "Email",
+            "delayInMinutes": int(step.get("delayInMinutes") or 0),
+            "executionMode": execution_mode,
+            "variants": updated_variants,
+        }
+        if step.get("parentId") is not None:
+            payload["parentId"] = step.get("parentId")
+        if step.get("ifConditionPositive") is not None:
+            payload["ifConditionPositive"] = bool(step.get("ifConditionPositive"))
+
         api(
             "PUT",
             f"/sequences/{SEQUENCE_ID}/steps/{step_id}",
-            json={
-                "type": "Email",
-                "executionMode": execution_mode,
-                "templates": updated_templates,
-            },
+            json=payload,
         )
         changed = True
 
