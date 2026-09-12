@@ -38,7 +38,7 @@ GENERIC_FRANKLIN_PATHS = {
     "/",
 }
 
-app = FastAPI(title="SRE Reply Profile Bridge", version="1.1.0")
+app = FastAPI(title="SRE Reply Profile Bridge", version="1.1.1")
 _state_lock = threading.Lock()
 _state = {
     "lastRunAt": None,
@@ -173,11 +173,9 @@ def update_contact(prospect, state_value):
 def exact_profile_only_body(body):
     text = body or ""
 
-    # Reply converts spaces in custom-field names to underscores in template variables.
     greeting_var = "{{Outreach_Greeting}}"
     profile_var = "{{Profile_URL}}"
 
-    # Replace the opening greeting without ever guessing a person's name.
     text, replaced = re.subn(
         r"(?is)^\s*(?:<p>\s*)?(?:hi|hello|hey)(?:\s+[^,<\r\n]{1,100})?,?",
         f"Hi {greeting_var},",
@@ -225,7 +223,6 @@ def exact_profile_only_body(body):
             + profile_var
         )
 
-    # Keep only one exact-profile destination per message.
     first = text.find(profile_var)
     if first >= 0:
         before = text[: first + len(profile_var)]
@@ -239,6 +236,47 @@ def get_sequence():
     return api("GET", f"/sequences/{SEQUENCE_ID}")
 
 
+def extract_email_step(step):
+    email_template = ((step.get("template") or {}).get("emailTemplate") or {})
+    execution_mode = (
+        email_template.get("executionMode")
+        or step.get("executionMode")
+        or "Automatic"
+    )
+    templates = (
+        email_template.get("templates")
+        or step.get("templates")
+        or step.get("variants")
+        or []
+    )
+
+    if templates:
+        return execution_mode, templates
+
+    detail = api("GET", f"/sequences/{SEQUENCE_ID}/steps/{step['id']}") or {}
+    detail_email = ((detail.get("template") or {}).get("emailTemplate") or {})
+    execution_mode = (
+        detail_email.get("executionMode")
+        or detail.get("executionMode")
+        or execution_mode
+    )
+    templates = (
+        detail_email.get("templates")
+        or detail.get("templates")
+        or detail.get("variants")
+        or []
+    )
+
+    if not templates:
+        direct_template = detail.get("template") or {}
+        if isinstance(direct_template, dict) and (
+            "body" in direct_template or "message" in direct_template
+        ):
+            templates = [direct_template]
+
+    return execution_mode, templates
+
+
 def update_email_steps():
     sequence = get_sequence()
     steps = sequence.get("steps") or []
@@ -249,12 +287,11 @@ def update_email_steps():
             continue
 
         step_id = step["id"]
-        email_template = ((step.get("template") or {}).get("emailTemplate") or {})
-        templates = email_template.get("templates") or []
+        execution_mode, templates = extract_email_step(step)
         if not templates:
             raise RuntimeError(f"EMAIL_STEP_{step_id}_HAS_NO_TEMPLATES")
 
-        variants = []
+        updated_templates = []
         step_changed = False
         for template in templates:
             variant_id = template.get("variantId") or template.get("id")
@@ -264,29 +301,28 @@ def update_email_steps():
             new_body = exact_profile_only_body(old_body)
             if new_body != old_body:
                 step_changed = True
-            variants.append(
-                {
-                    "id": variant_id,
-                    "subject": template.get("subject") or "",
-                    "message": new_body,
-                    "attachmentIds": template.get("attachmentIds") or [],
-                }
-            )
+
+            item = {
+                "id": variant_id,
+                "subject": template.get("subject") or "",
+                "body": new_body,
+            }
+            if template.get("templateId") is not None:
+                item["templateId"] = template.get("templateId")
+            updated_templates.append(item)
 
         if not step_changed:
             continue
 
-        payload = {
-            "type": "email",
-            "delayInMinutes": int(step.get("delayInMinutes") or 0),
-            "variants": variants,
-        }
-        if step.get("parentId") is not None:
-            payload["parentId"] = step.get("parentId")
-        if step.get("ifConditionPositive") is not None:
-            payload["ifConditionPositive"] = bool(step.get("ifConditionPositive"))
-
-        api("PUT", f"/sequences/{SEQUENCE_ID}/steps/{step_id}", json=payload)
+        api(
+            "PATCH",
+            f"/sequences/{SEQUENCE_ID}/steps/{step_id}",
+            json={
+                "type": "Email",
+                "executionMode": execution_mode,
+                "templates": updated_templates,
+            },
+        )
         changed = True
 
     return changed
