@@ -1,0 +1,23 @@
+{
+  "schema": "sre.reply-profile-bridge.prospects.v3",
+  "community": "FRANKLIN_TN",
+  "sequenceId": 1768444,
+  "targetDailySendCount": 10,
+  "replacementPolicy": "HOLD_INVALID_OR_FINISHED_AND_REPLACE_FROM_NEXT_QUALIFIED_POOL",
+  "prospects": [
+    {"contactId":761532444,"email":"kim@cityfarmhousefranklin.com","business":"City Farmhouse","outreachGreeting":"Kim","greetingBasis":"FIRST_PARTY_DIRECT_NAMED_CONTACT","profileId":"FR-ORG-79bcc4f562b4855c","profileUrl":"https://franklinnavigator.com/profiles/FR-ORG-79bcc4f562b4855c/"},
+    {"contactId":761532445,"email":"steve@franklinbakehouse.com","business":"Franklin Bakehouse","outreachGreeting":"Steve","greetingBasis":"FIRST_PARTY_DIRECT_NAMED_MAILBOX","profileId":"FR-ORG-0b798e2d4dd7-franklin-bakehouse","profileUrl":"https://franklinnavigator.com/profiles/FR-ORG-0b798e2d4dd7-franklin-bakehouse/"},
+    {"contactId":761532447,"email":"info@theblackdogpub.com","business":"Black Dog Pub & Music Lounge","outreachGreeting":"Black Dog Pub & Music Lounge team","greetingBasis":"VERIFIED_BUSINESS_SHARED_INBOX_NO_PERSON_GUESS","profileId":"FR-ORG-7070546ff6e46203","profileUrl":"https://franklinnavigator.com/profiles/FR-ORG-7070546ff6e46203/"},
+    {"contactId":761532462,"email":"info@basinpooldesigns.com","business":"Basin Pool Designs","outreachGreeting":"Basin Pool Designs team","greetingBasis":"VERIFIED_BUSINESS_SHARED_INBOX_NO_PERSON_GUESS","profileId":"FR-ORG-1cc10f0253eca7da","profileUrl":"https://franklinnavigator.com/profiles/FR-ORG-1cc10f0253eca7da/"},
+    {"contactId":761532463,"email":"hello@503bloomhouse.com","business":"503 Bloomhouse","outreachGreeting":"503 Bloomhouse team","greetingBasis":"VERIFIED_BUSINESS_SHARED_INBOX_NO_PERSON_GUESS","profileId":"FR-ORG-6123d7bd6b0a-503-bloomhouse","profileUrl":"https://franklinnavigator.com/profiles/FR-ORG-6123d7bd6b0a-503-bloomhouse/"},
+    {"contactId":761532465,"email":"hello.berryfarms@cookiefix.com","business":"Cookie Fix Berry Farms","outreachGreeting":"Cookie Fix Berry Farms team","greetingBasis":"VERIFIED_BUSINESS_SHARED_INBOX_NO_PERSON_GUESS","profileId":"FR-ORG-4bdb4b59fb7f-cookie-fix","profileUrl":"https://franklinnavigator.com/profiles/FR-ORG-4bdb4b59fb7f-cookie-fix/"},
+    {"contactId":761532466,"email":"marketing@hollieray.com","business":"Hollie Ray Boutique","outreachGreeting":"Hollie Ray Boutique team","greetingBasis":"VERIFIED_BUSINESS_SHARED_INBOX_NO_PERSON_GUESS","profileId":"FR-ORG-7f38c9c56030-hollie-ray-boutique","profileUrl":"https://franklinnavigator.com/profiles/FR-ORG-7f38c9c56030-hollie-ray-boutique/"},
+    {"contactId":761532467,"email":"info@getuscurrent.com","business":"Current Marketing Solutions","outreachGreeting":"Current Marketing Solutions team","greetingBasis":"VERIFIED_BUSINESS_SHARED_INBOX_NO_PERSON_GUESS","profileId":"FR-ORG-9d49f67808b09a1f","profileUrl":"https://franklinnavigator.com/profiles/FR-ORG-9d49f67808b09a1f/"},
+    {"contactId":761532469,"email":"info@shopellepark.com","business":"Elle Park","outreachGreeting":"Elle Park team","greetingBasis":"VERIFIED_BUSINESS_SHARED_INBOX_NO_PERSON_GUESS","profileId":"FR-ORG-0cd962953372-elle-park","profileUrl":"https://franklinnavigator.com/profiles/FR-ORG-0cd962953372-elle-park/"},
+    {"contactId":762161331,"email":"info@shopawakentennessee.com","business":"Awaken Tennessee","outreachGreeting":"Awaken Tennessee team","greetingBasis":"CURRENT_FIRST_PARTY_BUSINESS_SHARED_INBOX_NO_PERSON_GUESS_2026-09-12","profileId":"FR-ORG-37e724f931d6d747","profileUrl":"https://franklinnavigator.com/profiles/FR-ORG-37e724f931d6d747/"}
+  ],
+  "excludedProspects": [
+    {"contactId":761532464,"email":"hello@franklinjuice.com","business":"Franklin Juice Company","reason":"REPLY_AUTO_REPLY_DETECTED_AND_FINISHED_2026-09-08","preserveHistory":true}
+  ],
+  "backupProspects": []
+}
