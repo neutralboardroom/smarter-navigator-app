@@ -51,7 +51,7 @@ GENERIC_FRANKLIN_PATHS = {
     "/",
 }
 
-app = FastAPI(title="SRE Reply Profile Bridge", version="1.3.1")
+app = FastAPI(title="SRE Reply Profile Bridge", version="1.3.2")
 _state_lock = threading.Lock()
 _state = {
     "lastRunAt": None,
@@ -64,6 +64,7 @@ _state = {
     "templateUpdated": False,
     "campaignCopyVersion": None,
     "error": None,
+    "activation": {"attempted": False, "added": [], "notProcessed": None, "error": None},
     "ownerTest": {
         "enabled": OWNER_TEST_ON_STARTUP,
         "status": "NOT_REQUESTED" if not OWNER_TEST_ON_STARTUP else "PENDING",
@@ -475,6 +476,38 @@ def sync_once():
     if not held:
         template_updated = update_email_steps()
 
+    activation_result = {"attempted": False, "added": [], "notProcessed": None, "error": None}
+    activation_queue = [int(x) for x in (config.get("activationQueue") or []) if int(x) > 0]
+    if not held and activation_queue:
+        activation_result["attempted"] = True
+        try:
+            raw_activation = api(
+                "POST",
+                f"/sequences/{SEQUENCE_ID}/contact-links/bulk",
+                json={
+                    "contactIds": activation_queue,
+                    "removeFromExisting": False,
+                    "ignoreStepDelay": False,
+                },
+            ) or {}
+            activation_result["added"] = raw_activation.get("added") or []
+            activation_result["notProcessed"] = raw_activation.get("notProcessed")
+            print(
+                "SRE_BRIDGE activation "
+                + json.dumps(
+                    {
+                        "requested": activation_queue,
+                        "added": activation_result["added"],
+                        "notProcessed": activation_result["notProcessed"],
+                    },
+                    sort_keys=True,
+                ),
+                flush=True,
+            )
+        except Exception as activation_exc:
+            activation_result["error"] = str(activation_exc)
+            print(f"SRE_BRIDGE ACTIVATION ERROR {activation_exc}", flush=True)
+
     target = int(config.get("targetDailySendCount") or len(config["prospects"]))
     outcome = "PASS_READY" if not held else "HOLD_WITH_REPLACEMENT_REQUIRED"
     result = {
@@ -486,6 +519,7 @@ def sync_once():
         "held": held,
         "replacementNeeded": max(0, target - ready),
         "templateUpdated": template_updated,
+        "activation": activation_result,
         "error": None,
     }
     with _state_lock:
