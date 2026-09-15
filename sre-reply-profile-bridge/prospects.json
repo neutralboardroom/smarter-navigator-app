@@ -94,6 +94,15 @@
       "greetingBasis": "VERIFIED_BUSINESS_SHARED_INBOX_NO_PERSON_GUESS",
       "profileId": "FR-ORG-0cd962953372-elle-park",
       "profileUrl": "https://franklinnavigator.com/profiles/FR-ORG-0cd962953372-elle-park/"
+    },
+    {
+      "contactId": 762161331,
+      "email": "info@shopawakentennessee.com",
+      "business": "Awaken Tennessee",
+      "outreachGreeting": "Awaken Tennessee team",
+      "greetingBasis": "VERIFIED_BUSINESS_SHARED_INBOX_NO_PERSON_GUESS",
+      "profileId": "FR-ORG-37e724f931d6d747",
+      "profileUrl": "https://franklinnavigator.com/profiles/FR-ORG-37e724f931d6d747/"
     }
   ],
   "backupProspects": []
