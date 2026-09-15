@@ -14,10 +14,9 @@ API_BASE = "https://api.reply.io/v3"
 REPLY_API_KEY = os.environ.get("REPLY_API_KEY", "").strip()
 SEQUENCE_ID = int(os.environ.get("REPLY_SEQUENCE_ID", "1768444"))
 SYNC_INTERVAL_SECONDS = int(os.environ.get("SYNC_INTERVAL_SECONDS", "900"))
-CONFIG_PATH = os.environ.get(
-    "PROSPECT_CONFIG_PATH",
-    os.path.join(os.path.dirname(__file__), "prospects.json"),
-)
+# The managed prospect roster is source-controlled with this bridge.
+# Do not allow a stale Render environment override to silently pin an older cohort.
+CONFIG_PATH = os.path.join(os.path.dirname(__file__), "prospects.json")
 CAMPAIGN_COPY_PATH = os.environ.get(
     "CAMPAIGN_COPY_PATH",
     os.path.join(os.path.dirname(__file__), "campaign_copy.json"),
@@ -52,7 +51,7 @@ GENERIC_FRANKLIN_PATHS = {
     "/",
 }
 
-app = FastAPI(title="SRE Reply Profile Bridge", version="1.3.0")
+app = FastAPI(title="SRE Reply Profile Bridge", version="1.3.1")
 _state_lock = threading.Lock()
 _state = {
     "lastRunAt": None,
@@ -530,8 +529,13 @@ def runner():
 
 @app.on_event("startup")
 def startup():
+    try:
+        startup_config = load_config()
+        startup_count = len(startup_config.get("prospects") or [])
+    except Exception:
+        startup_count = -1
     print(
-        f"SRE_BRIDGE startup apiKeyConfigured={bool(REPLY_API_KEY)} sequenceId={SEQUENCE_ID}",
+        f"SRE_BRIDGE startup apiKeyConfigured={bool(REPLY_API_KEY)} sequenceId={SEQUENCE_ID} configPath={CONFIG_PATH} prospectCount={startup_count}",
         flush=True,
     )
     threading.Thread(target=runner, daemon=True).start()
