@@ -14,6 +14,10 @@ API_BASE = "https://api.reply.io/v3"
 REPLY_API_KEY = os.environ.get("REPLY_API_KEY", "").strip()
 SEQUENCE_ID = int(os.environ.get("REPLY_SEQUENCE_ID", "1768444"))
 SYNC_INTERVAL_SECONDS = int(os.environ.get("SYNC_INTERVAL_SECONDS", "900"))
+FIRST10_PROVISION_ON_STARTUP = os.environ.get("FIRST10_PROVISION_ON_STARTUP", "").strip().lower() in {"1", "true", "yes"}
+FIRST10_PILOT_SEQUENCE_NAME = "Franklin Navigator — First 10 Pilot — First Touch Only — 2026-09-20"
+FIRST10_PILOT_SCHEDULE_ID = 563862
+FIRST10_PILOT_EMAIL_ACCOUNT_ID = 954440
 # The managed prospect roster is source-controlled with this bridge.
 # Do not allow a stale Render environment override to silently pin an older cohort.
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), "prospects.json")
@@ -51,7 +55,7 @@ GENERIC_FRANKLIN_PATHS = {
     "/",
 }
 
-app = FastAPI(title="SRE Reply Profile Bridge", version="1.3.2")
+app = FastAPI(title="SRE Reply Profile Bridge", version="1.3.3")
 _state_lock = threading.Lock()
 _state = {
     "lastRunAt": None,
@@ -543,6 +547,108 @@ def sync_once():
     return result
 
 
+
+def provision_first10_sequence_once():
+    """Idempotently provision the bounded Franklin first-10, first-touch-only sequence.
+
+    This function only creates or reuses the dedicated one-step sequence.
+    It never creates contacts, enrolls contacts, starts/resumes a sequence,
+    or sends a message.
+    """
+    try:
+        skip = 0
+        existing = None
+        while True:
+            page = api("GET", f"/sequences?top=100&skip={skip}") or {}
+            items = page.get("items") or page.get("Items") or []
+            existing = next(
+                (
+                    item
+                    for item in items
+                    if str(item.get("name") or item.get("Name") or "")
+                    == FIRST10_PILOT_SEQUENCE_NAME
+                ),
+                None,
+            )
+            if existing or not (page.get("hasMore") or page.get("HasMore")):
+                break
+            skip += len(items) or 100
+
+        if existing:
+            sequence_id = int(existing.get("id") or existing.get("Id") or 0)
+            if sequence_id <= 0:
+                raise RuntimeError("FIRST10_EXISTING_SEQUENCE_HAS_NO_VALID_ID")
+            print(
+                "SRE_BRIDGE FIRST10_SEQUENCE REUSED "
+                + json.dumps(
+                    {"sequenceId": sequence_id, "name": FIRST10_PILOT_SEQUENCE_NAME},
+                    sort_keys=True,
+                ),
+                flush=True,
+            )
+            return sequence_id
+
+        payload = {
+            "name": FIRST10_PILOT_SEQUENCE_NAME,
+            "scheduleId": FIRST10_PILOT_SCHEDULE_ID,
+            "emailAccounts": [FIRST10_PILOT_EMAIL_ACCOUNT_ID],
+            "linkedInAccounts": [],
+            "settings": {
+                "emailsCountPerDay": 10,
+                "emailSendingDelaySeconds": 300,
+                "dailyThrottling": 10,
+                "useDailyThrottling": True,
+                "disableOpensTracking": True,
+                "repliesHandlingType": "markAsFinished",
+                "enableLinksTracking": False,
+            },
+            "steps": [
+                {
+                    "type": "email",
+                    "delayInMinutes": 0,
+                    "executionMode": "automatic",
+                    "variants": [
+                        {
+                            "subject": "Your Franklin Navigator community profile",
+                            "message": (
+                                "Hi {{Outreach_Greeting}},<br><br>"
+                                "Franklin Navigator is a local community network connecting Franklin residents with local businesses, professionals, organizations and resources.<br><br>"
+                                "<strong>Your community profile:</strong><br>"
+                                "{{Profile_URL}}<br><br>"
+                                "<strong>You can claim it free</strong> to review and manage your business information.<br><br>"
+                                "<strong>Optional Community Membership — $35/year</strong>, renewing annually until canceled:<br>"
+                                "• Build a richer profile with services, hours, photos and business details<br>"
+                                "• Add website, contact, booking, quote, menu/order and social links where applicable<br>"
+                                "• Gain additional local visibility and community-participation tools<br>"
+                                "• Help Franklin residents better understand and connect with your business<br><br>"
+                                "Factual corrections and profile removal are always free.<br><br>"
+                                "Questions? Just reply and I’ll be happy to help."
+                            ),
+                        }
+                    ],
+                }
+            ],
+        }
+        created = api("POST", "/sequences", json=payload) or {}
+        sequence_id = int(created.get("id") or created.get("Id") or 0)
+        if sequence_id <= 0:
+            raise RuntimeError(
+                "FIRST10_SEQUENCE_CREATE_RETURNED_NO_VALID_ID:" + json.dumps(created)[:800]
+            )
+        print(
+            "SRE_BRIDGE FIRST10_SEQUENCE CREATED "
+            + json.dumps(
+                {"sequenceId": sequence_id, "name": FIRST10_PILOT_SEQUENCE_NAME},
+                sort_keys=True,
+            ),
+            flush=True,
+        )
+        return sequence_id
+    except Exception as exc:
+        print(f"SRE_BRIDGE FIRST10_SEQUENCE ERROR {exc}", flush=True)
+        return None
+
+
 def runner():
     while True:
         try:
@@ -572,6 +678,8 @@ def startup():
         f"SRE_BRIDGE startup apiKeyConfigured={bool(REPLY_API_KEY)} sequenceId={SEQUENCE_ID} configPath={CONFIG_PATH} prospectCount={startup_count}",
         flush=True,
     )
+    if FIRST10_PROVISION_ON_STARTUP:
+        threading.Thread(target=provision_first10_sequence_once, daemon=True).start()
     threading.Thread(target=runner, daemon=True).start()
     if OWNER_TEST_ON_STARTUP:
         threading.Thread(target=send_owner_test_once, daemon=True).start()
