@@ -19,6 +19,7 @@ FIRST10_PILOT_SEQUENCE_NAME = "Franklin Navigator — First 10 Pilot — First T
 FIRST10_PILOT_SCHEDULE_ID = 563862
 FIRST10_PILOT_EMAIL_ACCOUNT_ID = 954440
 FIRST10_STAGE_FIELDS_ON_STARTUP = os.environ.get("FIRST10_STAGE_FIELDS_ON_STARTUP", "").strip().lower() in {"1", "true", "yes"}
+FIRST10_DOMAIN_HEALTH_PROBE_ON_STARTUP = os.environ.get("FIRST10_DOMAIN_HEALTH_PROBE_ON_STARTUP", "").strip().lower() in {"1", "true", "yes"}
 FIRST10_PILOT_SEQUENCE_ID = 1776919
 FIRST10_CONTACT_ROSTER = [
     {"contactId": 762750302, "email": "catering@littlehatsmarket.com", "business": "Little Hats Italian Market (Cool Springs)", "outreachGreeting": "Little Hats Italian Market", "profileId": "FR-ORG-17d04eafd603-little-hats-italian-market-cool-springs", "profileUrl": "https://franklinnavigator.com/profiles/FR-ORG-17d04eafd603-little-hats-italian-market-cool-springs/"},
@@ -69,7 +70,7 @@ GENERIC_FRANKLIN_PATHS = {
     "/",
 }
 
-app = FastAPI(title="SRE Reply Profile Bridge", version="1.3.4")
+app = FastAPI(title="SRE Reply Profile Bridge", version="1.3.5")
 _state_lock = threading.Lock()
 _state = {
     "lastRunAt": None,
@@ -563,6 +564,45 @@ def sync_once():
 
 
 
+
+def probe_first10_domain_health_once():
+    """Read-only probe of Reply's V3 email-account filter response.
+
+    The point is to obtain current provider-side domain-validation evidence.
+    This never changes DNS, mailbox, sequence, contact, or sending state.
+    """
+    attempts = [
+        {"top": 100, "skip": 0},
+        {"limit": 100, "offset": 0},
+        {},
+    ]
+    for payload in attempts:
+        try:
+            response = requests.post(
+                API_BASE + "/email-accounts/filter",
+                headers=auth_headers(),
+                timeout=30,
+                json=payload,
+            )
+            body = response.text[:12000]
+            print(
+                "SRE_BRIDGE FIRST10_DOMAIN_HEALTH_PROBE "
+                + json.dumps(
+                    {
+                        "status": response.status_code,
+                        "payload": payload,
+                        "body": body,
+                    },
+                    sort_keys=True,
+                ),
+                flush=True,
+            )
+            if response.status_code < 400:
+                return
+        except Exception as exc:
+            print(f"SRE_BRIDGE FIRST10_DOMAIN_HEALTH_PROBE ERROR {exc}", flush=True)
+
+
 def stage_first10_contact_fields_once():
     """Write only the exact profile-bound personalization fields for the bound ten.
 
@@ -727,6 +767,8 @@ def startup():
         threading.Thread(target=provision_first10_sequence_once, daemon=True).start()
     if FIRST10_STAGE_FIELDS_ON_STARTUP:
         threading.Thread(target=stage_first10_contact_fields_once, daemon=True).start()
+    if FIRST10_DOMAIN_HEALTH_PROBE_ON_STARTUP:
+        threading.Thread(target=probe_first10_domain_health_once, daemon=True).start()
     threading.Thread(target=runner, daemon=True).start()
     if OWNER_TEST_ON_STARTUP:
         threading.Thread(target=send_owner_test_once, daemon=True).start()
