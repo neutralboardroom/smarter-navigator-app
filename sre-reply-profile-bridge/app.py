@@ -18,6 +18,20 @@ FIRST10_PROVISION_ON_STARTUP = os.environ.get("FIRST10_PROVISION_ON_STARTUP", ""
 FIRST10_PILOT_SEQUENCE_NAME = "Franklin Navigator — First 10 Pilot — First Touch Only — 2026-09-20"
 FIRST10_PILOT_SCHEDULE_ID = 563862
 FIRST10_PILOT_EMAIL_ACCOUNT_ID = 954440
+FIRST10_STAGE_FIELDS_ON_STARTUP = os.environ.get("FIRST10_STAGE_FIELDS_ON_STARTUP", "").strip().lower() in {"1", "true", "yes"}
+FIRST10_PILOT_SEQUENCE_ID = 1776919
+FIRST10_CONTACT_ROSTER = [
+    {"contactId": 762750302, "email": "catering@littlehatsmarket.com", "business": "Little Hats Italian Market (Cool Springs)", "outreachGreeting": "Little Hats Italian Market", "profileId": "FR-ORG-17d04eafd603-little-hats-italian-market-cool-springs", "profileUrl": "https://franklinnavigator.com/profiles/FR-ORG-17d04eafd603-little-hats-italian-market-cool-springs/"},
+    {"contactId": 762750303, "email": "chowell@healthmarkets.com", "business": "Chris Howell Insurance", "outreachGreeting": "Chris Howell Insurance", "profileId": "FR-ORG-3e820e6c84e2-chris-howell-insurance", "profileUrl": "https://franklinnavigator.com/profiles/FR-ORG-3e820e6c84e2-chris-howell-insurance/"},
+    {"contactId": 762750304, "email": "events@daddysdogs.com", "business": "Daddy's Dogs", "outreachGreeting": "Daddy's Dogs", "profileId": "FR-ORG-305366afb36e-daddy-s-dogs", "profileUrl": "https://franklinnavigator.com/profiles/FR-ORG-305366afb36e-daddy-s-dogs/"},
+    {"contactId": 762750305, "email": "firm@buscherlaw.com", "business": "Buscher Law LLC - Franklin, TN", "outreachGreeting": "Buscher Law", "profileId": "FR-ORG-61c3753cb5af085e", "profileUrl": "https://franklinnavigator.com/profiles/FR-ORG-61c3753cb5af085e/"},
+    {"contactId": 762750306, "email": "franklin@mlrose.com", "business": "M.L. Rose Craft Beer & Burgers", "outreachGreeting": "M.L. Rose Franklin", "profileId": "FR-ORG-f6a218bfcaea-m-l-rose-craft-beer-and-burgers", "profileUrl": "https://franklinnavigator.com/profiles/FR-ORG-f6a218bfcaea-m-l-rose-craft-beer-and-burgers/"},
+    {"contactId": 762750307, "email": "info@615blinds.com", "business": "615 Blinds", "outreachGreeting": "615 Blinds", "profileId": "FR-ORG-f7f66777334f-615-blinds", "profileUrl": "https://franklinnavigator.com/profiles/FR-ORG-f7f66777334f-615-blinds/"},
+    {"contactId": 762750308, "email": "info@bartoninsurancegroupllc.com", "business": "Barton Insurance Group", "outreachGreeting": "Barton Insurance Group", "profileId": "FR-ORG-259647dc9d6a-barton-insurance-group", "profileUrl": "https://franklinnavigator.com/profiles/FR-ORG-259647dc9d6a-barton-insurance-group/"},
+    {"contactId": 762750309, "email": "info@bentonwhite.com", "business": "Benton White Insurance", "outreachGreeting": "Benton White Insurance", "profileId": "FR-ORG-0b0ca869c9ebe059", "profileUrl": "https://franklinnavigator.com/profiles/FR-ORG-0b0ca869c9ebe059/"},
+    {"contactId": 762750310, "email": "info@carriagehillinsurance.com", "business": "Carriage Hill Insurance & Risk Management", "outreachGreeting": "Carriage Hill Insurance", "profileId": "FR-ORG-6bce3aef91e8cc79", "profileUrl": "https://franklinnavigator.com/profiles/FR-ORG-6bce3aef91e8cc79/"},
+    {"contactId": 762750311, "email": "jen@bravemaggiedesigns.com", "business": "Brave Maggie Designs", "outreachGreeting": "Brave Maggie Designs", "profileId": "FR-ORG-58abf804cb86-brave-maggie-designs", "profileUrl": "https://franklinnavigator.com/profiles/FR-ORG-58abf804cb86-brave-maggie-designs/"}
+]
 # The managed prospect roster is source-controlled with this bridge.
 # Do not allow a stale Render environment override to silently pin an older cohort.
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), "prospects.json")
@@ -55,7 +69,7 @@ GENERIC_FRANKLIN_PATHS = {
     "/",
 }
 
-app = FastAPI(title="SRE Reply Profile Bridge", version="1.3.3")
+app = FastAPI(title="SRE Reply Profile Bridge", version="1.3.4")
 _state_lock = threading.Lock()
 _state = {
     "lastRunAt": None,
@@ -548,6 +562,37 @@ def sync_once():
 
 
 
+
+def stage_first10_contact_fields_once():
+    """Write only the exact profile-bound personalization fields for the bound ten.
+
+    Does not enroll contacts, start a sequence, or send messages.
+    """
+    try:
+        staged = []
+        for prospect in FIRST10_CONTACT_ROSTER:
+            update_contact(prospect, "READY_EXACT_PROFILE_BOUND_FIRST_TOUCH_ONLY")
+            staged.append(int(prospect["contactId"]))
+        if len(staged) != 10 or len(set(staged)) != 10:
+            raise RuntimeError("FIRST10_STAGE_CONTACT_SET_NOT_EXACTLY_10_UNIQUE")
+        print(
+            "SRE_BRIDGE FIRST10_FIELDS STAGED "
+            + json.dumps(
+                {
+                    "sequenceId": FIRST10_PILOT_SEQUENCE_ID,
+                    "contactIds": staged,
+                    "count": len(staged),
+                },
+                sort_keys=True,
+            ),
+            flush=True,
+        )
+        return staged
+    except Exception as exc:
+        print(f"SRE_BRIDGE FIRST10_FIELDS ERROR {exc}", flush=True)
+        return None
+
+
 def provision_first10_sequence_once():
     """Idempotently provision the bounded Franklin first-10, first-touch-only sequence.
 
@@ -680,6 +725,8 @@ def startup():
     )
     if FIRST10_PROVISION_ON_STARTUP:
         threading.Thread(target=provision_first10_sequence_once, daemon=True).start()
+    if FIRST10_STAGE_FIELDS_ON_STARTUP:
+        threading.Thread(target=stage_first10_contact_fields_once, daemon=True).start()
     threading.Thread(target=runner, daemon=True).start()
     if OWNER_TEST_ON_STARTUP:
         threading.Thread(target=send_owner_test_once, daemon=True).start()
