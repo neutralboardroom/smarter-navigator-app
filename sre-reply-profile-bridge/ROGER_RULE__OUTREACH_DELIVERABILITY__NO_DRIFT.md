@@ -44,6 +44,8 @@ Franklin Navigator outreach must be built and operated to preserve long-term sen
 - Mailshake Sending Calendar Rules: https://docs.mailshake.com/article/140-how-can-i-tweak-sending-schedules
 - Mailshake Unsubscribe Management: https://docs.mailshake.com/article/60-how-does-mailshake-manage-unsubscribes
 - Mailshake Domain Health Checks: https://docs.mailshake.com/article/415-domain-health-checks-when-connecting-a-sending-account
+- Mailshake One-click vs Two-click Unsubscribe: https://docs.mailshake.com/article/201-one-click-vs-two-click-unsubscribe-setting
+- Microsoft Outlook High-Volume Sender Requirements: https://techcommunity.microsoft.com/blog/microsoftdefenderforoffice365blog/strengthening-email-ecosystem-outlook%E2%80%99s-new-requirements-for-high%E2%80%90volume-senders/4399730
 
 ## Current first-10 enforcement
 
