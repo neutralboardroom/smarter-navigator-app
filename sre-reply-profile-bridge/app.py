@@ -8,7 +8,7 @@ from urllib.parse import parse_qs, urlparse
 
 import requests
 from bs4 import BeautifulSoup
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
 
 API_BASE = "https://api.reply.io/v3"
 REPLY_API_KEY = os.environ.get("REPLY_API_KEY", "").strip()
@@ -17,6 +17,9 @@ MAILSHAKE_API_KEY = os.environ.get("MAILSHAKE_API_KEY", "").strip()
 MAILSHAKE_CAMPAIGN_ID = int(os.environ.get("MAILSHAKE_CAMPAIGN_ID", "0") or 0)
 MAILSHAKE_MONITOR_INTERVAL_SECONDS = int(os.environ.get("MAILSHAKE_MONITOR_INTERVAL_SECONDS", "900"))
 REPLY_SYNC_ENABLED = os.environ.get("REPLY_SYNC_ENABLED", "false").strip().lower() in {"1", "true", "yes"}
+MAILSHAKE_PUSH_SECRET = os.environ.get("MAILSHAKE_PUSH_SECRET", "").strip()
+MAILSHAKE_PUBLIC_BASE_URL = os.environ.get("MAILSHAKE_PUBLIC_BASE_URL", "https://sre-reply-profile-bridge.onrender.com").rstrip("/")
+MAILSHAKE_PUSH_SETUP_ON_STARTUP = os.environ.get("MAILSHAKE_PUSH_SETUP_ON_STARTUP", "false").strip().lower() in {"1", "true", "yes"}
 SEQUENCE_ID = int(os.environ.get("REPLY_SEQUENCE_ID", "1768444"))
 SYNC_INTERVAL_SECONDS = int(os.environ.get("SYNC_INTERVAL_SECONDS", "900"))
 FIRST10_PROVISION_ON_STARTUP = os.environ.get("FIRST10_PROVISION_ON_STARTUP", "").strip().lower() in {"1", "true", "yes"}
@@ -107,6 +110,9 @@ _state = {
         "outOfOfficeCount": 0,
         "delayNotificationCount": 0,
         "problem": None,
+        "pushSubscriptions": {},
+        "lastPushAt": None,
+        "lastPushEvent": None,
     },
     "ownerTest": {
         "enabled": OWNER_TEST_ON_STARTUP,
@@ -212,6 +218,58 @@ def test_mailshake_connection():
         print(f"SRE_BRIDGE MAILSHAKE_CONNECTION FAIL {error}", flush=True)
         return False
 
+
+
+
+def mailshake_fetch_resource(resource_url):
+    if not resource_url or not str(resource_url).startswith(MAILSHAKE_API_BASE + "/"):
+        raise RuntimeError("MAILSHAKE_PUSH_RESOURCE_URL_REJECTED")
+    response = requests.get(
+        resource_url,
+        auth=(MAILSHAKE_API_KEY, ""),
+        timeout=30,
+    )
+    if response.status_code >= 400:
+        raise RuntimeError(
+            f"Mailshake push resource -> {response.status_code}: {response.text[:500]}"
+        )
+    return response.json() if response.content else {}
+
+
+def setup_mailshake_pushes_once():
+    if not MAILSHAKE_API_KEY or MAILSHAKE_CAMPAIGN_ID <= 0 or not MAILSHAKE_PUSH_SECRET:
+        return
+    results = {}
+    for event_name in ("MessageSent", "Replied"):
+        target = (
+            f"{MAILSHAKE_PUBLIC_BASE_URL}/mailshake/push/"
+            f"{MAILSHAKE_PUSH_SECRET}/{event_name.lower()}"
+        )
+        try:
+            try:
+                mailshake_api(
+                    "POST",
+                    "/push/delete",
+                    data={"targetUrl": target},
+                )
+            except Exception:
+                pass
+            mailshake_api(
+                "POST",
+                "/push/create",
+                json={
+                    "event": event_name,
+                    "targetUrl": target,
+                    "filter": {"campaignID": MAILSHAKE_CAMPAIGN_ID},
+                },
+            )
+            results[event_name] = "ACTIVE"
+            print(f"SRE_BRIDGE MAILSHAKE_PUSH {event_name} ACTIVE", flush=True)
+        except Exception as exc:
+            results[event_name] = f"ERROR:{str(exc)[:200]}"
+            print(f"SRE_BRIDGE MAILSHAKE_PUSH {event_name} ERROR {exc}", flush=True)
+    with _state_lock:
+        _state["mailshake"]["pushSubscriptions"] = results
 
 
 def mailshake_paginated(path, params=None, per_page=100, max_pages=10):
@@ -1002,6 +1060,8 @@ def startup():
     threading.Thread(target=test_mailshake_connection, daemon=True).start()
     if MAILSHAKE_API_KEY and MAILSHAKE_CAMPAIGN_ID > 0:
         threading.Thread(target=mailshake_monitor_runner, daemon=True).start()
+        if MAILSHAKE_PUSH_SETUP_ON_STARTUP and MAILSHAKE_PUSH_SECRET:
+            threading.Thread(target=setup_mailshake_pushes_once, daemon=True).start()
     if FIRST10_PROVISION_ON_STARTUP:
         threading.Thread(target=provision_first10_sequence_once, daemon=True).start()
     if FIRST10_STAGE_FIELDS_ON_STARTUP:
@@ -1048,8 +1108,52 @@ def mailshake_pilot_status():
         "outOfOfficeCount": ms.get("outOfOfficeCount"),
         "delayNotificationCount": ms.get("delayNotificationCount"),
         "problem": ms.get("problem"),
+        "pushSubscriptions": ms.get("pushSubscriptions"),
+        "lastPushAt": ms.get("lastPushAt"),
+        "lastPushEvent": ms.get("lastPushEvent"),
         "error": ms.get("error"),
     }
+
+
+@app.post("/mailshake/push/{secret}/{event_name}")
+async def mailshake_push(secret: str, event_name: str, request: Request):
+    if not MAILSHAKE_PUSH_SECRET or secret != MAILSHAKE_PUSH_SECRET:
+        raise HTTPException(status_code=404, detail="Not found")
+    body = await request.json()
+    resource_url = str(body.get("resource_url") or "").strip()
+    event_key = event_name.strip().lower()
+    if event_key not in {"messagesent", "replied"}:
+        raise HTTPException(status_code=404, detail="Not found")
+    try:
+        resource = mailshake_fetch_resource(resource_url)
+        campaign = resource.get("campaign") or {}
+        resource_campaign_id = int(campaign.get("id") or 0)
+        if resource_campaign_id and resource_campaign_id != MAILSHAKE_CAMPAIGN_ID:
+            print(
+                f"SRE_BRIDGE MAILSHAKE_PUSH IGNORED event={event_key} campaign={resource_campaign_id}",
+                flush=True,
+            )
+            return {"ok": True, "ignored": True}
+        with _state_lock:
+            _state["mailshake"]["lastPushAt"] = now_iso()
+            _state["mailshake"]["lastPushEvent"] = event_key
+        print(
+            "SRE_BRIDGE MAILSHAKE_PUSH RECEIVED "
+            + json.dumps(
+                {
+                    "event": event_key,
+                    "campaignId": resource_campaign_id or MAILSHAKE_CAMPAIGN_ID,
+                    "replyType": resource.get("type") if event_key == "replied" else None,
+                },
+                sort_keys=True,
+            ),
+            flush=True,
+        )
+        threading.Thread(target=mailshake_monitor_once, daemon=True).start()
+        return {"ok": True}
+    except Exception as exc:
+        print(f"SRE_BRIDGE MAILSHAKE_PUSH ERROR {exc}", flush=True)
+        raise HTTPException(status_code=500, detail="Push processing failed")
 
 
 @app.get("/mailshake/health")
