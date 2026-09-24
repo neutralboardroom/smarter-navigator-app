@@ -1,0 +1,42 @@
+{
+  "rule_id": "RR-FN-OUTREACH-DELIVERABILITY-2026-09-24-V1",
+  "no_drift": true,
+  "fail_closed": true,
+  "current_pilot": {
+    "campaign_id": 1553662,
+    "max_total_sends": 10,
+    "max_daily_sends": 10,
+    "max_messages_per_sequence": 1,
+    "pause_on_any_bounce": true,
+    "pause_on_any_unsubscribe": true,
+    "pause_on_roster_mismatch": true,
+    "pause_on_profile_binding_mismatch": true,
+    "tracking_opens": false,
+    "tracking_clicks": false
+  },
+  "scale": {
+    "automatic_scale_up": false,
+    "default_max_per_mailbox_per_day": 100,
+    "ramp_daily_caps": [
+      20,
+      40,
+      55,
+      75,
+      100
+    ],
+    "internal_bounce_warning_rate": 0.02,
+    "hard_bounce_pause_rate": 0.05,
+    "gmail_spam_target_below": 0.001,
+    "gmail_spam_hard_stop_at": 0.003
+  },
+  "compliance": {
+    "accurate_sender_identity": true,
+    "nondeceptive_subject": true,
+    "physical_postal_address_required": true,
+    "clear_opt_out_required": true,
+    "visible_unsubscribe_required_for_scale": true,
+    "one_click_unsubscribe_when_supported": true,
+    "durable_suppression": true,
+    "spf_dkim_dmarc_gate_before_scale": true
+  }
+}
