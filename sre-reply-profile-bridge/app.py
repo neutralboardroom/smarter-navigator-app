@@ -20,6 +20,8 @@ REPLY_SYNC_ENABLED = os.environ.get("REPLY_SYNC_ENABLED", "false").strip().lower
 MAILSHAKE_PUSH_SECRET = os.environ.get("MAILSHAKE_PUSH_SECRET", "").strip()
 MAILSHAKE_PUBLIC_BASE_URL = os.environ.get("MAILSHAKE_PUBLIC_BASE_URL", "https://sre-reply-profile-bridge.onrender.com").rstrip("/")
 MAILSHAKE_PUSH_SETUP_ON_STARTUP = os.environ.get("MAILSHAKE_PUSH_SETUP_ON_STARTUP", "false").strip().lower() in {"1", "true", "yes"}
+MAILSHAKE_COMPLIANCE_HOLD = os.environ.get("MAILSHAKE_COMPLIANCE_HOLD", "true").strip().lower() in {"1", "true", "yes"}
+DELIVERABILITY_POLICY_PATH = os.path.join(os.path.dirname(__file__), "roger_deliverability_policy.json")
 SEQUENCE_ID = int(os.environ.get("REPLY_SEQUENCE_ID", "1768444"))
 SYNC_INTERVAL_SECONDS = int(os.environ.get("SYNC_INTERVAL_SECONDS", "900"))
 FIRST10_PROVISION_ON_STARTUP = os.environ.get("FIRST10_PROVISION_ON_STARTUP", "").strip().lower() in {"1", "true", "yes"}
@@ -78,7 +80,7 @@ GENERIC_FRANKLIN_PATHS = {
     "/",
 }
 
-app = FastAPI(title="SRE Outreach Provider Bridge", version="1.5.0")
+app = FastAPI(title="SRE Outreach Provider Bridge", version="1.6.0")
 _state_lock = threading.Lock()
 _state = {
     "lastRunAt": None,
@@ -221,6 +223,36 @@ def test_mailshake_connection():
 
 
 
+def load_deliverability_policy():
+    with open(DELIVERABILITY_POLICY_PATH, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def policy_pause_reason(sent_count, bounce_count, unsubscribe_count, roster_exact, campaign):
+    policy = load_deliverability_policy()
+    current = policy.get("current_pilot") or {}
+    if MAILSHAKE_COMPLIANCE_HOLD:
+        return "COMPLIANCE_FOOTER_AND_UNSUBSCRIBE_CONFIRMATION_REQUIRED"
+    if not roster_exact:
+        return "ROSTER_OR_PROFILE_BINDING_MISMATCH"
+    if int(current.get("max_messages_per_sequence") or 1) == 1:
+        messages = campaign.get("messages") or []
+        if len(messages) != 1:
+            return "UNEXPECTED_SEQUENCE_MESSAGE_COUNT"
+    sender = campaign.get("sender") or {}
+    sender_email = str(sender.get("emailAddress") or "").strip().lower()
+    if sender_email and sender_email != "community@franklinnavigator.com":
+        return "UNEXPECTED_SENDER_MAILBOX"
+    if bool(current.get("pause_on_any_bounce")) and bounce_count > 0:
+        return "PILOT_BOUNCE_DETECTED"
+    if bool(current.get("pause_on_any_unsubscribe")) and unsubscribe_count > 0:
+        return "PILOT_UNSUBSCRIBE_DETECTED"
+    max_total = int(current.get("max_total_sends") or 10)
+    if sent_count >= max_total and not bool(campaign.get("isPaused")):
+        return "FIRST_10_COMPLETE_LOCK_CLOSED"
+    return None
+
+
 def mailshake_fetch_resource(resource_url):
     if not resource_url or not str(resource_url).startswith(MAILSHAKE_API_BASE + "/"):
         raise RuntimeError("MAILSHAKE_PUSH_RESOURCE_URL_REJECTED")
@@ -357,11 +389,15 @@ def mailshake_monitor_once():
         and not field_mismatches
     )
     sent_count = len(sent)
-    safety_pause_reason = None
-    if not roster_exact:
-        safety_pause_reason = "ROSTER_OR_PROFILE_BINDING_MISMATCH"
-    elif sent_count >= 10 and not bool(campaign.get("isPaused")):
-        safety_pause_reason = "FIRST_10_COMPLETE_LOCK_CLOSED"
+    bounce_count = sum(1 for value in reply_types if value == "bounce")
+    unsubscribe_count = sum(1 for value in reply_types if value == "unsubscribe")
+    safety_pause_reason = policy_pause_reason(
+        sent_count,
+        bounce_count,
+        unsubscribe_count,
+        roster_exact,
+        campaign,
+    )
 
     if safety_pause_reason and not bool(campaign.get("isPaused")):
         try:
@@ -390,8 +426,8 @@ def mailshake_monitor_once():
         "recipientCount": len(recipients),
         "sentCount": sent_count,
         "replyCount": sum(1 for value in reply_types if value == "reply"),
-        "bounceCount": sum(1 for value in reply_types if value == "bounce"),
-        "unsubscribeCount": sum(1 for value in reply_types if value == "unsubscribe"),
+        "bounceCount": bounce_count,
+        "unsubscribeCount": unsubscribe_count,
         "outOfOfficeCount": sum(1 for value in reply_types if value == "out-of-office"),
         "delayNotificationCount": sum(1 for value in reply_types if value == "delay-notification"),
         "safetyPauseReason": safety_pause_reason if bool(campaign.get("isPaused")) else None,
@@ -400,6 +436,8 @@ def mailshake_monitor_once():
             "unexpectedRecipientCount": len(unexpected),
             "fieldMismatchCount": len(field_mismatches),
         },
+        "policyVersion": load_deliverability_policy().get("rule_id"),
+        "complianceHold": MAILSHAKE_COMPLIANCE_HOLD,
         "error": None,
     }
     with _state_lock:
@@ -1081,7 +1119,7 @@ def startup():
     except Exception:
         startup_count = -1
     print(
-        f"SRE_BRIDGE startup apiKeyConfigured={bool(REPLY_API_KEY)} replySyncEnabled={REPLY_SYNC_ENABLED} mailshakeApiKeyConfigured={bool(MAILSHAKE_API_KEY)} mailshakeCampaignId={MAILSHAKE_CAMPAIGN_ID} sequenceId={SEQUENCE_ID} configPath={CONFIG_PATH} prospectCount={startup_count}",
+        f"SRE_BRIDGE startup apiKeyConfigured={bool(REPLY_API_KEY)} replySyncEnabled={REPLY_SYNC_ENABLED} mailshakeApiKeyConfigured={bool(MAILSHAKE_API_KEY)} mailshakeCampaignId={MAILSHAKE_CAMPAIGN_ID} complianceHold={MAILSHAKE_COMPLIANCE_HOLD} sequenceId={SEQUENCE_ID} configPath={CONFIG_PATH} prospectCount={startup_count}",
         flush=True,
     )
     threading.Thread(target=test_mailshake_connection, daemon=True).start()
@@ -1136,6 +1174,8 @@ def mailshake_pilot_status():
         "delayNotificationCount": ms.get("delayNotificationCount"),
         "problem": ms.get("problem"),
         "safetyPauseReason": ms.get("safetyPauseReason"),
+        "policyVersion": ms.get("policyVersion"),
+        "complianceHold": ms.get("complianceHold"),
         "pushSubscriptions": ms.get("pushSubscriptions"),
         "lastPushAt": ms.get("lastPushAt"),
         "lastPushEvent": ms.get("lastPushEvent"),
