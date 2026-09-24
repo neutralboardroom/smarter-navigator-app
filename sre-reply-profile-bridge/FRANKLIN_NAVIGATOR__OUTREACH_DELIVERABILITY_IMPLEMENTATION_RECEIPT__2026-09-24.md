@@ -47,10 +47,10 @@ Rejected:
 ## Manual UI-only correction still required
 
 Before the compliance hold is released:
-1. Set team unsubscribe behavior to one-click where supported.
-2. Add a visible unsubscribe link to the sending signature.
-3. Add Franklin Navigator's valid physical postal address.
-4. Add a clear commercial/community-outreach identification in the footer.
-5. Verify the final live signature in Mailshake.
+1. Add a visible unsubscribe link to the sending signature; current Mailshake two-click behavior may remain for this low-volume pilot because Mailshake recommends it to reduce scanner-triggered accidental unsubscribes.
+2. Add Franklin Navigator's valid physical postal address.
+3. Add a clear commercial/community-outreach identification in the footer.
+4. Verify the final live signature in Mailshake.
+5. Before any high-volume scale, separately verify RFC 8058 one-click header support for Gmail/Yahoo requirements rather than assuming Mailshake's visible-link setting provides it.
 
 No campaign send may resume until those items are verified.
