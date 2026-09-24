@@ -350,24 +350,51 @@ def mailshake_monitor_once():
                 field_mismatches.append({"field": key, "email": email})
 
     reply_types = [str(item.get("type") or "").strip().lower() for item in replies]
+    roster_exact = (
+        len(recipients) == 10
+        and not missing
+        and not unexpected
+        and not field_mismatches
+    )
+    sent_count = len(sent)
+    safety_pause_reason = None
+    if not roster_exact:
+        safety_pause_reason = "ROSTER_OR_PROFILE_BINDING_MISMATCH"
+    elif sent_count >= 10 and not bool(campaign.get("isPaused")):
+        safety_pause_reason = "FIRST_10_COMPLETE_LOCK_CLOSED"
+
+    if safety_pause_reason and not bool(campaign.get("isPaused")):
+        try:
+            mailshake_api(
+                "POST",
+                "/campaigns/pause",
+                data={"campaignID": MAILSHAKE_CAMPAIGN_ID},
+            )
+            campaign["isPaused"] = True
+            print(
+                f"SRE_BRIDGE MAILSHAKE_SAFETY_PAUSE reason={safety_pause_reason}",
+                flush=True,
+            )
+        except Exception as exc:
+            print(
+                f"SRE_BRIDGE MAILSHAKE_SAFETY_PAUSE ERROR reason={safety_pause_reason} error={exc}",
+                flush=True,
+            )
+
     summary = {
         "campaignId": MAILSHAKE_CAMPAIGN_ID,
         "campaignTitle": campaign.get("title"),
         "campaignPaused": campaign.get("isPaused"),
         "lastPollAt": checked_at,
-        "rosterExact": (
-            len(recipients) == 10
-            and not missing
-            and not unexpected
-            and not field_mismatches
-        ),
+        "rosterExact": roster_exact,
         "recipientCount": len(recipients),
-        "sentCount": len(sent),
+        "sentCount": sent_count,
         "replyCount": sum(1 for value in reply_types if value == "reply"),
         "bounceCount": sum(1 for value in reply_types if value == "bounce"),
         "unsubscribeCount": sum(1 for value in reply_types if value == "unsubscribe"),
         "outOfOfficeCount": sum(1 for value in reply_types if value == "out-of-office"),
         "delayNotificationCount": sum(1 for value in reply_types if value == "delay-notification"),
+        "safetyPauseReason": safety_pause_reason if bool(campaign.get("isPaused")) else None,
         "problem": None if (not missing and not unexpected and not field_mismatches) else {
             "missingRecipientCount": len(missing),
             "unexpectedRecipientCount": len(unexpected),
@@ -1108,6 +1135,7 @@ def mailshake_pilot_status():
         "outOfOfficeCount": ms.get("outOfOfficeCount"),
         "delayNotificationCount": ms.get("delayNotificationCount"),
         "problem": ms.get("problem"),
+        "safetyPauseReason": ms.get("safetyPauseReason"),
         "pushSubscriptions": ms.get("pushSubscriptions"),
         "lastPushAt": ms.get("lastPushAt"),
         "lastPushEvent": ms.get("lastPushEvent"),
