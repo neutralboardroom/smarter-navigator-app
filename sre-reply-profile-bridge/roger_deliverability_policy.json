@@ -40,6 +40,12 @@
     "spf_dkim_dmarc_gate_before_scale": true,
     "mailshake_visible_unsubscribe_mode_current_pilot": "two-click-allowed",
     "rfc8058_one_click_header_support_must_be_verified_before_high_volume": true,
-    "do_not_assume_mailshake_visible_one_click_equals_rfc8058": true
+    "do_not_assume_mailshake_visible_one_click_equals_rfc8058": true,
+    "rfc8058_received_message_proof_required_before_campaign_release": true,
+    "rfc8058_required_headers": {
+      "List-Unsubscribe": "HTTPS URL required",
+      "List-Unsubscribe-Post": "List-Unsubscribe=One-Click"
+    },
+    "reverify_rfc8058_after_provider_or_sending_architecture_change": true
   }
 }
