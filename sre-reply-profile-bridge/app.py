@@ -12,6 +12,8 @@ from fastapi import FastAPI
 
 API_BASE = "https://api.reply.io/v3"
 REPLY_API_KEY = os.environ.get("REPLY_API_KEY", "").strip()
+MAILSHAKE_API_BASE = "https://api.mailshake.com/2017-04-01"
+MAILSHAKE_API_KEY = os.environ.get("MAILSHAKE_API_KEY", "").strip()
 SEQUENCE_ID = int(os.environ.get("REPLY_SEQUENCE_ID", "1768444"))
 SYNC_INTERVAL_SECONDS = int(os.environ.get("SYNC_INTERVAL_SECONDS", "900"))
 FIRST10_PROVISION_ON_STARTUP = os.environ.get("FIRST10_PROVISION_ON_STARTUP", "").strip().lower() in {"1", "true", "yes"}
@@ -70,7 +72,7 @@ GENERIC_FRANKLIN_PATHS = {
     "/",
 }
 
-app = FastAPI(title="SRE Reply Profile Bridge", version="1.3.5")
+app = FastAPI(title="SRE Outreach Provider Bridge", version="1.4.0")
 _state_lock = threading.Lock()
 _state = {
     "lastRunAt": None,
@@ -84,6 +86,12 @@ _state = {
     "campaignCopyVersion": None,
     "error": None,
     "activation": {"attempted": False, "added": [], "notProcessed": None, "error": None},
+    "mailshake": {
+        "configured": bool(MAILSHAKE_API_KEY),
+        "connection": "NOT_TESTED" if MAILSHAKE_API_KEY else "NOT_CONFIGURED",
+        "lastCheckedAt": None,
+        "error": None,
+    },
     "ownerTest": {
         "enabled": OWNER_TEST_ON_STARTUP,
         "status": "NOT_REQUESTED" if not OWNER_TEST_ON_STARTUP else "PENDING",
@@ -124,6 +132,69 @@ def api(method, path, **kwargs):
     if not response.content:
         return None
     return response.json()
+
+
+def mailshake_api(method, path, **kwargs):
+    if not MAILSHAKE_API_KEY:
+        raise RuntimeError("MAILSHAKE_API_KEY is not configured")
+    response = requests.request(
+        method,
+        MAILSHAKE_API_BASE + path,
+        auth=(MAILSHAKE_API_KEY, ""),
+        timeout=30,
+        **kwargs,
+    )
+    if response.status_code >= 400:
+        raise RuntimeError(
+            f"Mailshake API {method} {path} -> {response.status_code}: {response.text[:500]}"
+        )
+    if not response.content:
+        return None
+    return response.json()
+
+
+def test_mailshake_connection():
+    checked_at = now_iso()
+    if not MAILSHAKE_API_KEY:
+        with _state_lock:
+            _state["mailshake"].update(
+                {
+                    "configured": False,
+                    "connection": "NOT_CONFIGURED",
+                    "lastCheckedAt": checked_at,
+                    "error": None,
+                }
+            )
+        return False
+
+    try:
+        result = mailshake_api("GET", "/me") or {}
+        if not result.get("user"):
+            raise RuntimeError("MAILSHAKE_ME_RESPONSE_MISSING_USER")
+        with _state_lock:
+            _state["mailshake"].update(
+                {
+                    "configured": True,
+                    "connection": "PASS",
+                    "lastCheckedAt": checked_at,
+                    "error": None,
+                }
+            )
+        print("SRE_BRIDGE MAILSHAKE_CONNECTION PASS", flush=True)
+        return True
+    except Exception as exc:
+        error = str(exc)
+        with _state_lock:
+            _state["mailshake"].update(
+                {
+                    "configured": True,
+                    "connection": "FAIL",
+                    "lastCheckedAt": checked_at,
+                    "error": error,
+                }
+            )
+        print(f"SRE_BRIDGE MAILSHAKE_CONNECTION FAIL {error}", flush=True)
+        return False
 
 
 def load_config():
@@ -760,9 +831,10 @@ def startup():
     except Exception:
         startup_count = -1
     print(
-        f"SRE_BRIDGE startup apiKeyConfigured={bool(REPLY_API_KEY)} sequenceId={SEQUENCE_ID} configPath={CONFIG_PATH} prospectCount={startup_count}",
+        f"SRE_BRIDGE startup apiKeyConfigured={bool(REPLY_API_KEY)} mailshakeApiKeyConfigured={bool(MAILSHAKE_API_KEY)} sequenceId={SEQUENCE_ID} configPath={CONFIG_PATH} prospectCount={startup_count}",
         flush=True,
     )
+    threading.Thread(target=test_mailshake_connection, daemon=True).start()
     if FIRST10_PROVISION_ON_STARTUP:
         threading.Thread(target=provision_first10_sequence_once, daemon=True).start()
     if FIRST10_STAGE_FIELDS_ON_STARTUP:
@@ -782,7 +854,17 @@ def health():
         "sequenceId": SEQUENCE_ID,
         "lastRunAt": _state["lastRunAt"],
         "lastOutcome": _state["lastOutcome"],
+        "mailshakeApiKeyConfigured": bool(MAILSHAKE_API_KEY),
+        "mailshakeConnection": _state["mailshake"]["connection"],
     }
+
+
+@app.get("/mailshake/health")
+def mailshake_health():
+    ok = test_mailshake_connection()
+    with _state_lock:
+        state = dict(_state["mailshake"])
+    return {"ok": ok, **state}
 
 
 @app.get("/status")
