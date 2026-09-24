@@ -280,14 +280,15 @@ def mailshake_monitor_once():
         if not actual:
             continue
         fields = actual.get("fields") or {}
+        fields_ci = {str(key).strip().lower(): value for key, value in fields.items()}
         expected_fields = {
-            "Outreach_Greeting": expected["outreachGreeting"],
-            "Profile_URL": expected["profileUrl"],
-            "Franklin_Profile_ID": expected["profileId"],
-            "Outreach_State": "READY_EXACT_PROFILE_BOUND_FIRST_TOUCH_ONLY",
+            "outreach_greeting": expected["outreachGreeting"],
+            "profile_url": expected["profileUrl"],
+            "franklin_profile_id": expected["profileId"],
+            "outreach_state": "READY_EXACT_PROFILE_BOUND_FIRST_TOUCH_ONLY",
         }
         for key, value in expected_fields.items():
-            if str(fields.get(key) or "") != str(value):
+            if str(fields_ci.get(key) or "").strip() != str(value).strip():
                 field_mismatches.append({"field": key, "email": email})
 
     reply_types = [str(item.get("type") or "").strip().lower() for item in replies]
@@ -333,6 +334,9 @@ def mailshake_monitor_once():
                 "unsubscribes": summary["unsubscribeCount"],
                 "outOfOffice": summary["outOfOfficeCount"],
                 "delays": summary["delayNotificationCount"],
+                "missingRecipients": 0 if summary["problem"] is None else summary["problem"]["missingRecipientCount"],
+                "unexpectedRecipients": 0 if summary["problem"] is None else summary["problem"]["unexpectedRecipientCount"],
+                "fieldMismatches": 0 if summary["problem"] is None else summary["problem"]["fieldMismatchCount"],
             },
             sort_keys=True,
         ),
