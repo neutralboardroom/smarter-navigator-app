@@ -51,6 +51,6 @@ Before the compliance hold is released:
 2. Add Franklin Navigator's valid physical postal address.
 3. Add a clear commercial/community-outreach identification in the footer.
 4. Verify the final live signature in Mailshake.
-5. Before any high-volume scale, separately verify RFC 8058 one-click header support for Gmail/Yahoo requirements rather than assuming Mailshake's visible-link setting provides it.
+5. Before releasing the promotional campaign at all, send one controlled real message to an owner-controlled mailbox and inspect the raw received headers. Require both a valid HTTPS `List-Unsubscribe` header and `List-Unsubscribe-Post: List-Unsubscribe=One-Click`. Do not infer compliance from Mailshake's visible-link setting. Re-check after any provider/mailbox/SMTP architecture change.
 
 No campaign send may resume until those items are verified.
