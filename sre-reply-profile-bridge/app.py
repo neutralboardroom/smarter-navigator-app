@@ -14,6 +14,9 @@ API_BASE = "https://api.reply.io/v3"
 REPLY_API_KEY = os.environ.get("REPLY_API_KEY", "").strip()
 MAILSHAKE_API_BASE = "https://api.mailshake.com/2017-04-01"
 MAILSHAKE_API_KEY = os.environ.get("MAILSHAKE_API_KEY", "").strip()
+MAILSHAKE_CAMPAIGN_ID = int(os.environ.get("MAILSHAKE_CAMPAIGN_ID", "0") or 0)
+MAILSHAKE_MONITOR_INTERVAL_SECONDS = int(os.environ.get("MAILSHAKE_MONITOR_INTERVAL_SECONDS", "900"))
+REPLY_SYNC_ENABLED = os.environ.get("REPLY_SYNC_ENABLED", "false").strip().lower() in {"1", "true", "yes"}
 SEQUENCE_ID = int(os.environ.get("REPLY_SEQUENCE_ID", "1768444"))
 SYNC_INTERVAL_SECONDS = int(os.environ.get("SYNC_INTERVAL_SECONDS", "900"))
 FIRST10_PROVISION_ON_STARTUP = os.environ.get("FIRST10_PROVISION_ON_STARTUP", "").strip().lower() in {"1", "true", "yes"}
@@ -72,7 +75,7 @@ GENERIC_FRANKLIN_PATHS = {
     "/",
 }
 
-app = FastAPI(title="SRE Outreach Provider Bridge", version="1.4.0")
+app = FastAPI(title="SRE Outreach Provider Bridge", version="1.5.0")
 _state_lock = threading.Lock()
 _state = {
     "lastRunAt": None,
@@ -91,6 +94,19 @@ _state = {
         "connection": "NOT_TESTED" if MAILSHAKE_API_KEY else "NOT_CONFIGURED",
         "lastCheckedAt": None,
         "error": None,
+        "campaignId": MAILSHAKE_CAMPAIGN_ID or None,
+        "campaignTitle": None,
+        "campaignPaused": None,
+        "lastPollAt": None,
+        "rosterExact": None,
+        "recipientCount": 0,
+        "sentCount": 0,
+        "replyCount": 0,
+        "bounceCount": 0,
+        "unsubscribeCount": 0,
+        "outOfOfficeCount": 0,
+        "delayNotificationCount": 0,
+        "problem": None,
     },
     "ownerTest": {
         "enabled": OWNER_TEST_ON_STARTUP,
@@ -195,6 +211,151 @@ def test_mailshake_connection():
             )
         print(f"SRE_BRIDGE MAILSHAKE_CONNECTION FAIL {error}", flush=True)
         return False
+
+
+
+def mailshake_paginated(path, params=None, per_page=100, max_pages=10):
+    params = dict(params or {})
+    params["perPage"] = min(int(per_page), 100)
+    results = []
+    next_token = None
+    for _ in range(max_pages):
+        page_params = dict(params)
+        if next_token:
+            page_params["nextToken"] = next_token
+        page = mailshake_api("GET", path, params=page_params) or {}
+        results.extend(page.get("results") or [])
+        next_token = page.get("nextToken")
+        if not next_token:
+            break
+    return results
+
+
+def mailshake_monitor_once():
+    checked_at = now_iso()
+    if not MAILSHAKE_API_KEY:
+        raise RuntimeError("MAILSHAKE_API_KEY is not configured")
+    if MAILSHAKE_CAMPAIGN_ID <= 0:
+        raise RuntimeError("MAILSHAKE_CAMPAIGN_ID is not configured")
+
+    campaign = mailshake_api(
+        "GET",
+        "/campaigns/get",
+        params={"campaignID": MAILSHAKE_CAMPAIGN_ID},
+    ) or {}
+
+    recipients = mailshake_paginated(
+        "/recipients/list",
+        {"campaignID": MAILSHAKE_CAMPAIGN_ID},
+        per_page=100,
+    )
+    sent = mailshake_paginated(
+        "/activity/sent",
+        {
+            "campaignID": MAILSHAKE_CAMPAIGN_ID,
+            "excludeBody": "true",
+        },
+        per_page=25,
+    )
+    replies = mailshake_paginated(
+        "/activity/replies",
+        {"campaignID": MAILSHAKE_CAMPAIGN_ID},
+        per_page=25,
+    )
+
+    expected_by_email = {
+        item["email"].strip().lower(): item for item in FIRST10_CONTACT_ROSTER
+    }
+    actual_by_email = {
+        str(item.get("emailAddress") or "").strip().lower(): item
+        for item in recipients
+        if str(item.get("emailAddress") or "").strip()
+    }
+    missing = sorted(set(expected_by_email) - set(actual_by_email))
+    unexpected = sorted(set(actual_by_email) - set(expected_by_email))
+
+    field_mismatches = []
+    for email, expected in expected_by_email.items():
+        actual = actual_by_email.get(email)
+        if not actual:
+            continue
+        fields = actual.get("fields") or {}
+        expected_fields = {
+            "Outreach_Greeting": expected["outreachGreeting"],
+            "Profile_URL": expected["profileUrl"],
+            "Franklin_Profile_ID": expected["profileId"],
+            "Outreach_State": "READY_EXACT_PROFILE_BOUND_FIRST_TOUCH_ONLY",
+        }
+        for key, value in expected_fields.items():
+            if str(fields.get(key) or "") != str(value):
+                field_mismatches.append({"field": key, "email": email})
+
+    reply_types = [str(item.get("type") or "").strip().lower() for item in replies]
+    summary = {
+        "campaignId": MAILSHAKE_CAMPAIGN_ID,
+        "campaignTitle": campaign.get("title"),
+        "campaignPaused": campaign.get("isPaused"),
+        "lastPollAt": checked_at,
+        "rosterExact": (
+            len(recipients) == 10
+            and not missing
+            and not unexpected
+            and not field_mismatches
+        ),
+        "recipientCount": len(recipients),
+        "sentCount": len(sent),
+        "replyCount": sum(1 for value in reply_types if value == "reply"),
+        "bounceCount": sum(1 for value in reply_types if value == "bounce"),
+        "unsubscribeCount": sum(1 for value in reply_types if value == "unsubscribe"),
+        "outOfOfficeCount": sum(1 for value in reply_types if value == "out-of-office"),
+        "delayNotificationCount": sum(1 for value in reply_types if value == "delay-notification"),
+        "problem": None if (not missing and not unexpected and not field_mismatches) else {
+            "missingRecipientCount": len(missing),
+            "unexpectedRecipientCount": len(unexpected),
+            "fieldMismatchCount": len(field_mismatches),
+        },
+        "error": None,
+    }
+    with _state_lock:
+        _state["mailshake"].update(summary)
+
+    print(
+        "SRE_BRIDGE MAILSHAKE_MONITOR "
+        + json.dumps(
+            {
+                "campaignId": MAILSHAKE_CAMPAIGN_ID,
+                "paused": summary["campaignPaused"],
+                "rosterExact": summary["rosterExact"],
+                "recipients": summary["recipientCount"],
+                "sent": summary["sentCount"],
+                "replies": summary["replyCount"],
+                "bounces": summary["bounceCount"],
+                "unsubscribes": summary["unsubscribeCount"],
+                "outOfOffice": summary["outOfOfficeCount"],
+                "delays": summary["delayNotificationCount"],
+            },
+            sort_keys=True,
+        ),
+        flush=True,
+    )
+    return summary
+
+
+def mailshake_monitor_runner():
+    while True:
+        try:
+            mailshake_monitor_once()
+        except Exception as exc:
+            error = str(exc)
+            with _state_lock:
+                _state["mailshake"].update(
+                    {
+                        "lastPollAt": now_iso(),
+                        "error": error,
+                    }
+                )
+            print(f"SRE_BRIDGE MAILSHAKE_MONITOR ERROR {error}", flush=True)
+        time.sleep(max(300, MAILSHAKE_MONITOR_INTERVAL_SECONDS))
 
 
 def load_config():
@@ -831,17 +992,20 @@ def startup():
     except Exception:
         startup_count = -1
     print(
-        f"SRE_BRIDGE startup apiKeyConfigured={bool(REPLY_API_KEY)} mailshakeApiKeyConfigured={bool(MAILSHAKE_API_KEY)} sequenceId={SEQUENCE_ID} configPath={CONFIG_PATH} prospectCount={startup_count}",
+        f"SRE_BRIDGE startup apiKeyConfigured={bool(REPLY_API_KEY)} replySyncEnabled={REPLY_SYNC_ENABLED} mailshakeApiKeyConfigured={bool(MAILSHAKE_API_KEY)} mailshakeCampaignId={MAILSHAKE_CAMPAIGN_ID} sequenceId={SEQUENCE_ID} configPath={CONFIG_PATH} prospectCount={startup_count}",
         flush=True,
     )
     threading.Thread(target=test_mailshake_connection, daemon=True).start()
+    if MAILSHAKE_API_KEY and MAILSHAKE_CAMPAIGN_ID > 0:
+        threading.Thread(target=mailshake_monitor_runner, daemon=True).start()
     if FIRST10_PROVISION_ON_STARTUP:
         threading.Thread(target=provision_first10_sequence_once, daemon=True).start()
     if FIRST10_STAGE_FIELDS_ON_STARTUP:
         threading.Thread(target=stage_first10_contact_fields_once, daemon=True).start()
     if FIRST10_DOMAIN_HEALTH_PROBE_ON_STARTUP:
         threading.Thread(target=probe_first10_domain_health_once, daemon=True).start()
-    threading.Thread(target=runner, daemon=True).start()
+    if REPLY_SYNC_ENABLED:
+        threading.Thread(target=runner, daemon=True).start()
     if OWNER_TEST_ON_STARTUP:
         threading.Thread(target=send_owner_test_once, daemon=True).start()
 
@@ -856,6 +1020,31 @@ def health():
         "lastOutcome": _state["lastOutcome"],
         "mailshakeApiKeyConfigured": bool(MAILSHAKE_API_KEY),
         "mailshakeConnection": _state["mailshake"]["connection"],
+        "mailshakeCampaignId": MAILSHAKE_CAMPAIGN_ID or None,
+        "mailshakeLastPollAt": _state["mailshake"].get("lastPollAt"),
+    }
+
+
+@app.get("/mailshake/pilot/status")
+def mailshake_pilot_status():
+    with _state_lock:
+        ms = dict(_state["mailshake"])
+    return {
+        "ok": ms.get("connection") == "PASS" and not ms.get("error"),
+        "campaignId": ms.get("campaignId"),
+        "campaignTitle": ms.get("campaignTitle"),
+        "campaignPaused": ms.get("campaignPaused"),
+        "lastPollAt": ms.get("lastPollAt"),
+        "rosterExact": ms.get("rosterExact"),
+        "recipientCount": ms.get("recipientCount"),
+        "sentCount": ms.get("sentCount"),
+        "replyCount": ms.get("replyCount"),
+        "bounceCount": ms.get("bounceCount"),
+        "unsubscribeCount": ms.get("unsubscribeCount"),
+        "outOfOfficeCount": ms.get("outOfOfficeCount"),
+        "delayNotificationCount": ms.get("delayNotificationCount"),
+        "problem": ms.get("problem"),
+        "error": ms.get("error"),
     }
 
 
