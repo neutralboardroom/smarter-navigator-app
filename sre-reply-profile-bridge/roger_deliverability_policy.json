@@ -37,6 +37,9 @@
     "visible_unsubscribe_required_for_scale": true,
     "one_click_unsubscribe_when_supported": true,
     "durable_suppression": true,
-    "spf_dkim_dmarc_gate_before_scale": true
+    "spf_dkim_dmarc_gate_before_scale": true,
+    "mailshake_visible_unsubscribe_mode_current_pilot": "two-click-allowed",
+    "rfc8058_one_click_header_support_must_be_verified_before_high_volume": true,
+    "do_not_assume_mailshake_visible_one_click_equals_rfc8058": true
   }
 }
