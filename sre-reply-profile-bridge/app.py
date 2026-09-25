@@ -22,6 +22,8 @@ MAILSHAKE_PUBLIC_BASE_URL = os.environ.get("MAILSHAKE_PUBLIC_BASE_URL", "https:/
 MAILSHAKE_PUSH_SETUP_ON_STARTUP = os.environ.get("MAILSHAKE_PUSH_SETUP_ON_STARTUP", "false").strip().lower() in {"1", "true", "yes"}
 MAILSHAKE_COMPLIANCE_HOLD = os.environ.get("MAILSHAKE_COMPLIANCE_HOLD", "true").strip().lower() in {"1", "true", "yes"}
 DELIVERABILITY_POLICY_PATH = os.path.join(os.path.dirname(__file__), "roger_deliverability_policy.json")
+ORG_SAFETY_POLICY_PATH = os.path.join(os.path.dirname(__file__), "org_domain_safety_policy.json")
+ORG_SAFETY_STATE_PATH = os.path.join(os.path.dirname(__file__), "org_domain_safety_state.json")
 SEQUENCE_ID = int(os.environ.get("REPLY_SEQUENCE_ID", "1768444"))
 SYNC_INTERVAL_SECONDS = int(os.environ.get("SYNC_INTERVAL_SECONDS", "900"))
 FIRST10_PROVISION_ON_STARTUP = os.environ.get("FIRST10_PROVISION_ON_STARTUP", "").strip().lower() in {"1", "true", "yes"}
@@ -80,7 +82,7 @@ GENERIC_FRANKLIN_PATHS = {
     "/",
 }
 
-app = FastAPI(title="SRE Outreach Provider Bridge", version="1.6.0")
+app = FastAPI(title="SRE Outreach Provider Bridge", version="1.7.0")
 _state_lock = threading.Lock()
 _state = {
     "lastRunAt": None,
@@ -115,6 +117,11 @@ _state = {
         "pushSubscriptions": {},
         "lastPushAt": None,
         "lastPushEvent": None,
+        "genericInboxCount": 0,
+        "duplicateDomains": [],
+        "domainHolds": [],
+        "domainSuppressions": [],
+        "ownerAlerts": [],
     },
     "ownerTest": {
         "enabled": OWNER_TEST_ON_STARTUP,
@@ -223,16 +230,135 @@ def test_mailshake_connection():
 
 
 
+def load_org_safety_policy():
+    with open(ORG_SAFETY_POLICY_PATH, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def load_org_safety_state():
+    with open(ORG_SAFETY_STATE_PATH, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def email_domain(email):
+    value = str(email or "").strip().lower()
+    if "@" not in value:
+        return ""
+    return value.rsplit("@", 1)[1].strip().rstrip(".")
+
+
+def is_generic_or_role_inbox(email):
+    value = str(email or "").strip().lower()
+    local = value.split("@", 1)[0] if "@" in value else value
+    role_names = {
+        "info", "contact", "office", "admin", "hello", "support", "team",
+        "general", "sales", "events", "catering", "firm", "mail", "inquiries",
+        "reception", "community", "marketing"
+    }
+    return local in role_names
+
+
+def reply_recipient_email(item):
+    recipient = item.get("recipient") or {}
+    candidates = [
+        recipient.get("emailAddress"),
+        recipient.get("email"),
+        item.get("emailAddress"),
+        item.get("email"),
+        item.get("recipientEmailAddress"),
+    ]
+    for candidate in candidates:
+        if candidate and "@" in str(candidate):
+            return str(candidate).strip().lower()
+    return ""
+
+
+def explicit_org_wide_dnc(item):
+    # Intentionally narrow: individual unsubscribe must remain individual by default.
+    text_blob = json.dumps(item, sort_keys=True).lower()
+    phrases = (
+        "do not contact our company",
+        "do not contact our organization",
+        "remove our organization",
+        "remove our company",
+        "stop emailing anyone here",
+        "stop emailing our company",
+        "stop emailing our organization",
+        "do not contact this domain",
+        "do not email anyone at",
+        "do not contact anyone at",
+    )
+    return any(phrase in text_blob for phrase in phrases)
+
+
+def detect_org_negative_signals(replies):
+    complaint_domains = set()
+    org_dnc_domains = set()
+    for item in replies:
+        reply_type = str(item.get("type") or "").strip().lower()
+        email = reply_recipient_email(item)
+        domain = email_domain(email)
+        if not domain:
+            continue
+        if reply_type in {"spam", "spam-complaint", "spam_complaint", "complaint", "abuse"}:
+            complaint_domains.add(domain)
+        if explicit_org_wide_dnc(item):
+            org_dnc_domains.add(domain)
+    return sorted(complaint_domains), sorted(org_dnc_domains)
+
+
+def build_owner_alerts(complaint_domains, org_dnc_domains):
+    now = now_iso()
+    alerts = []
+    for domain in complaint_domains:
+        alerts.append({
+            "id": f"spam-complaint:{domain}",
+            "priority": "HIGH",
+            "triggerType": "SPAM_COMPLAINT",
+            "domain": domain,
+            "affectedScope": "COMPANY_DOMAIN",
+            "automaticAction": "DOMAIN_HOLD_AND_CAMPAIGN_PAUSE",
+            "state": "HOLD",
+            "ownerDecisionRequired": True,
+            "detectedAt": now,
+            "persistenceReconciliationRequired": True,
+        })
+    for domain in org_dnc_domains:
+        alerts.append({
+            "id": f"org-dnc:{domain}",
+            "priority": "HIGH",
+            "triggerType": "ORGANIZATION_WIDE_DO_NOT_CONTACT",
+            "domain": domain,
+            "affectedScope": "COMPANY_DOMAIN",
+            "automaticAction": "DOMAIN_SUPPRESSION_AND_CAMPAIGN_PAUSE",
+            "state": "SUPPRESSED",
+            "ownerDecisionRequired": True,
+            "detectedAt": now,
+            "persistenceReconciliationRequired": True,
+        })
+    return alerts
+
+
 def load_deliverability_policy():
     with open(DELIVERABILITY_POLICY_PATH, "r", encoding="utf-8") as f:
         return json.load(f)
 
 
-def policy_pause_reason(sent_count, bounce_count, unsubscribe_count, roster_exact, campaign):
+def policy_pause_reason(sent_count, bounce_count, unsubscribe_count, roster_exact, campaign, duplicate_domains, held_domains, suppressed_domains, complaint_domains, org_dnc_domains):
     policy = load_deliverability_policy()
     current = policy.get("current_pilot") or {}
     if MAILSHAKE_COMPLIANCE_HOLD:
         return "COMPLIANCE_FOOTER_AND_UNSUBSCRIBE_CONFIRMATION_REQUIRED"
+    if complaint_domains:
+        return "SPAM_COMPLAINT_DOMAIN_HOLD"
+    if org_dnc_domains:
+        return "ORGANIZATION_WIDE_DNC_DOMAIN_SUPPRESSION"
+    if held_domains:
+        return "DURABLE_DOMAIN_HOLD_PRESENT"
+    if suppressed_domains:
+        return "DURABLE_DOMAIN_SUPPRESSION_PRESENT"
+    if duplicate_domains:
+        return "CURRENT_PILOT_DOMAIN_24H_THROTTLE_RISK"
     if not roster_exact:
         return "ROSTER_OR_PROFILE_BINDING_MISMATCH"
     if int(current.get("max_messages_per_sequence") or 1) == 1:
@@ -381,6 +507,29 @@ def mailshake_monitor_once():
             if str(fields_ci.get(key) or "").strip() != str(value).strip():
                 field_mismatches.append({"field": key, "email": email})
 
+    recipient_domains = [
+        email_domain(item.get("emailAddress"))
+        for item in recipients
+        if email_domain(item.get("emailAddress"))
+    ]
+    domain_counts = {}
+    for domain in recipient_domains:
+        domain_counts[domain] = domain_counts.get(domain, 0) + 1
+    duplicate_domains = sorted(
+        domain for domain, count in domain_counts.items() if count > 1
+    )
+    generic_inbox_count = sum(
+        1 for item in recipients if is_generic_or_role_inbox(item.get("emailAddress"))
+    )
+
+    org_state = load_org_safety_state()
+    durable_holds = set((org_state.get("domain_holds") or {}).keys())
+    durable_suppressions = set((org_state.get("domain_suppressions") or {}).keys())
+    held_domains = sorted(set(recipient_domains) & durable_holds)
+    suppressed_domains = sorted(set(recipient_domains) & durable_suppressions)
+    complaint_domains, org_dnc_domains = detect_org_negative_signals(replies)
+    runtime_owner_alerts = build_owner_alerts(complaint_domains, org_dnc_domains)
+
     reply_types = [str(item.get("type") or "").strip().lower() for item in replies]
     roster_exact = (
         len(recipients) == 10
@@ -397,6 +546,11 @@ def mailshake_monitor_once():
         unsubscribe_count,
         roster_exact,
         campaign,
+        duplicate_domains,
+        held_domains,
+        suppressed_domains,
+        complaint_domains,
+        org_dnc_domains,
     )
 
     if safety_pause_reason and not bool(campaign.get("isPaused")):
@@ -430,6 +584,11 @@ def mailshake_monitor_once():
         "unsubscribeCount": unsubscribe_count,
         "outOfOfficeCount": sum(1 for value in reply_types if value == "out-of-office"),
         "delayNotificationCount": sum(1 for value in reply_types if value == "delay-notification"),
+        "genericInboxCount": generic_inbox_count,
+        "duplicateDomains": duplicate_domains,
+        "domainHolds": sorted(set(held_domains) | set(complaint_domains)),
+        "domainSuppressions": sorted(set(suppressed_domains) | set(org_dnc_domains)),
+        "ownerAlerts": runtime_owner_alerts,
         "safetyPauseReason": safety_pause_reason if bool(campaign.get("isPaused")) else None,
         "problem": None if (not missing and not unexpected and not field_mismatches) else {
             "missingRecipientCount": len(missing),
@@ -1179,6 +1338,11 @@ def mailshake_pilot_status():
         "pushSubscriptions": ms.get("pushSubscriptions"),
         "lastPushAt": ms.get("lastPushAt"),
         "lastPushEvent": ms.get("lastPushEvent"),
+        "genericInboxCount": ms.get("genericInboxCount"),
+        "duplicateDomains": ms.get("duplicateDomains"),
+        "domainHolds": ms.get("domainHolds"),
+        "domainSuppressions": ms.get("domainSuppressions"),
+        "ownerAlertCount": len(ms.get("ownerAlerts") or []),
         "error": ms.get("error"),
     }
 
@@ -1222,6 +1386,18 @@ async def mailshake_push(secret: str, event_name: str, request: Request):
     except Exception as exc:
         print(f"SRE_BRIDGE MAILSHAKE_PUSH ERROR {exc}", flush=True)
         raise HTTPException(status_code=500, detail="Push processing failed")
+
+
+@app.get("/owner/alerts")
+def owner_alerts():
+    with _state_lock:
+        alerts = list(_state["mailshake"].get("ownerAlerts") or [])
+    return {
+        "ok": True,
+        "ruleId": load_org_safety_policy().get("rule_id"),
+        "count": len(alerts),
+        "alerts": alerts,
+    }
 
 
 @app.get("/mailshake/health")
