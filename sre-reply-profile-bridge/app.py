@@ -15,6 +15,7 @@ REPLY_API_KEY = os.environ.get("REPLY_API_KEY", "").strip()
 MAILSHAKE_API_BASE = "https://api.mailshake.com/2017-04-01"
 MAILSHAKE_API_KEY = os.environ.get("MAILSHAKE_API_KEY", "").strip()
 MAILSHAKE_CAMPAIGN_ID = int(os.environ.get("MAILSHAKE_CAMPAIGN_ID", "0") or 0)
+MAILSHAKE_COMPLIANCE_TEST_CAMPAIGN_ID = int(os.environ.get("MAILSHAKE_COMPLIANCE_TEST_CAMPAIGN_ID", "1554023") or 1554023)
 MAILSHAKE_MONITOR_INTERVAL_SECONDS = int(os.environ.get("MAILSHAKE_MONITOR_INTERVAL_SECONDS", "900"))
 REPLY_SYNC_ENABLED = os.environ.get("REPLY_SYNC_ENABLED", "false").strip().lower() in {"1", "true", "yes"}
 MAILSHAKE_PUSH_SECRET = os.environ.get("MAILSHAKE_PUSH_SECRET", "").strip()
@@ -1335,6 +1336,54 @@ def health():
         "mailshakeConnection": _state["mailshake"]["connection"],
         "mailshakeCampaignId": MAILSHAKE_CAMPAIGN_ID or None,
         "mailshakeLastPollAt": _state["mailshake"].get("lastPollAt"),
+    }
+
+
+@app.get("/mailshake/compliance-test/status")
+def mailshake_compliance_test_status():
+    campaign_id = MAILSHAKE_COMPLIANCE_TEST_CAMPAIGN_ID
+    campaign = mailshake_api(
+        "GET",
+        "/campaigns/get",
+        params={"campaignID": campaign_id},
+    ) or {}
+    recipients = mailshake_paginated(
+        "/recipients/list",
+        {"campaignID": campaign_id},
+        per_page=100,
+    )
+    replies = mailshake_paginated(
+        "/activity/replies",
+        {"campaignID": campaign_id},
+        per_page=100,
+    )
+    sent = mailshake_paginated(
+        "/activity/sent",
+        {"campaignID": campaign_id, "excludeBody": "true"},
+        per_page=100,
+    )
+    recipient_summaries = []
+    for item in recipients:
+        recipient_summaries.append({
+            "emailAddress": item.get("emailAddress"),
+            "status": item.get("status"),
+            "isUnsubscribed": item.get("isUnsubscribed"),
+            "unsubscribed": item.get("unsubscribed"),
+            "unsubscribeDate": item.get("unsubscribeDate"),
+            "isPaused": item.get("isPaused"),
+            "paused": item.get("paused"),
+            "state": item.get("state"),
+        })
+    reply_types = [str(item.get("type") or "").strip().lower() for item in replies]
+    return {
+        "campaignId": campaign_id,
+        "campaignTitle": campaign.get("title"),
+        "campaignPaused": campaign.get("isPaused"),
+        "recipientCount": len(recipients),
+        "sentCount": len(sent),
+        "unsubscribeActivityCount": sum(1 for value in reply_types if value == "unsubscribe"),
+        "replyTypes": reply_types,
+        "recipients": recipient_summaries,
     }
 
 
