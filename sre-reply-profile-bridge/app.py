@@ -307,32 +307,52 @@ def detect_org_negative_signals(replies):
     return sorted(complaint_domains), sorted(org_dnc_domains)
 
 
+def organizations_for_domain(domain):
+    names = []
+    for item in FIRST10_CONTACT_ROSTER:
+        if email_domain(item.get("email")) == domain:
+            name = str(item.get("business") or "").strip()
+            if name and name not in names:
+                names.append(name)
+    return names
+
+
 def build_owner_alerts(complaint_domains, org_dnc_domains):
     now = now_iso()
     alerts = []
     for domain in complaint_domains:
+        organizations = organizations_for_domain(domain)
         alerts.append({
             "id": f"spam-complaint:{domain}",
             "priority": "HIGH",
             "triggerType": "SPAM_COMPLAINT",
+            "organizationNames": organizations,
             "domain": domain,
             "affectedScope": "COMPANY_DOMAIN",
+            "sourceEvidence": "MAILSHAKE_REPLY_ACTIVITY",
             "automaticAction": "DOMAIN_HOLD_AND_CAMPAIGN_PAUSE",
+            "pendingMessagesAction": "CAMPAIGN_PAUSED_PENDING_OWNER_REVIEW",
             "state": "HOLD",
             "ownerDecisionRequired": True,
+            "acknowledgmentRequired": True,
             "detectedAt": now,
             "persistenceReconciliationRequired": True,
         })
     for domain in org_dnc_domains:
+        organizations = organizations_for_domain(domain)
         alerts.append({
             "id": f"org-dnc:{domain}",
             "priority": "HIGH",
             "triggerType": "ORGANIZATION_WIDE_DO_NOT_CONTACT",
+            "organizationNames": organizations,
             "domain": domain,
             "affectedScope": "COMPANY_DOMAIN",
+            "sourceEvidence": "MAILSHAKE_REPLY_ACTIVITY_EXPLICIT_ORG_WIDE_LANGUAGE",
             "automaticAction": "DOMAIN_SUPPRESSION_AND_CAMPAIGN_PAUSE",
+            "pendingMessagesAction": "CAMPAIGN_PAUSED_AND_DOMAIN_BLOCKED_PENDING_PERSISTENCE_RECONCILIATION",
             "state": "SUPPRESSED",
             "ownerDecisionRequired": True,
+            "acknowledgmentRequired": True,
             "detectedAt": now,
             "persistenceReconciliationRequired": True,
         })
@@ -616,6 +636,11 @@ def mailshake_monitor_once():
                 "unsubscribes": summary["unsubscribeCount"],
                 "outOfOffice": summary["outOfOfficeCount"],
                 "delays": summary["delayNotificationCount"],
+                "genericInboxes": summary["genericInboxCount"],
+                "duplicateDomains": summary["duplicateDomains"],
+                "domainHolds": summary["domainHolds"],
+                "domainSuppressions": summary["domainSuppressions"],
+                "ownerAlerts": len(summary["ownerAlerts"]),
                 "missingRecipients": 0 if summary["problem"] is None else summary["problem"]["missingRecipientCount"],
                 "unexpectedRecipients": 0 if summary["problem"] is None else summary["problem"]["unexpectedRecipientCount"],
                 "fieldMismatches": 0 if summary["problem"] is None else summary["problem"]["fieldMismatchCount"],
