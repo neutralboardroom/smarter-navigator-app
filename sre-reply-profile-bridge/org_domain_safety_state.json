@@ -1,0 +1,11 @@
+{
+  "schema_version": "1.0",
+  "rule_id": "RR-FN-ORG-OUTREACH-001",
+  "updated_at": "2026-09-25T04:57:00Z",
+  "domain_holds": {},
+  "domain_suppressions": {},
+  "individual_suppressions": {},
+  "negative_signal_events": [],
+  "owner_alerts": [],
+  "persistence_note": "Canonical durable seed. Runtime incidents must be reconciled into this ledger; service restart never clears a HOLD or SUPPRESSION."
+}
