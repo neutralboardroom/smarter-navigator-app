@@ -54,3 +54,29 @@ Before the compliance hold is released:
 5. Before releasing the promotional campaign at all, send one controlled real message to an owner-controlled mailbox and inspect the raw received headers. Require both a valid HTTPS `List-Unsubscribe` header and `List-Unsubscribe-Post: List-Unsubscribe=One-Click`. Do not infer compliance from Mailshake's visible-link setting. Re-check after any provider/mailbox/SMTP architecture change.
 
 No campaign send may resume until those items are verified.
+
+
+## Controlled Gmail compliance test — 2026-09-25
+
+Production-path test campaign:
+- Mailshake campaign ID: 1554023
+- Recipient: owner-controlled Gmail address
+- Real Mailshake send: PASS
+- SPF: PASS
+- DKIM: PASS
+- DMARC: PASS
+- Visible Mailshake unsubscribe link: PASS
+- Mailshake unsubscribe activity registration: PASS (1 unsubscribe recorded)
+- RFC 8058 List-Unsubscribe header: FAIL / ABSENT
+- RFC 8058 List-Unsubscribe-Post header: FAIL / ABSENT
+
+Disposition:
+- Main Franklin Navigator first-10 campaign remains PAUSED / FAIL-CLOSED.
+- Compliance hold MUST NOT be released based only on the working body unsubscribe link.
+- Public Mailshake documentation reviewed on 2026-09-25 documents body-link unsubscribe behavior and one-click/two-click body-link handling, but no documented control or public API parameter was found for adding RFC 8058 List-Unsubscribe / List-Unsubscribe-Post headers to SMTP-connected sends.
+- Technical support inquiry sent to hello@mailshake.com on 2026-09-25 asking whether Mailshake can add RFC 8058 headers for SMTP-connected accounts and, if so, the exact configuration required.
+- No provider migration, custom sender replacement, or compliance-gate weakening is authorized by this receipt.
+
+Next gate:
+- Obtain authoritative Mailshake answer OR independently qualify another sending path that demonstrably emits both required RFC 8058 headers in an actual received message.
+- Re-test with a real owner-controlled Gmail delivery before releasing the first-10 campaign.
