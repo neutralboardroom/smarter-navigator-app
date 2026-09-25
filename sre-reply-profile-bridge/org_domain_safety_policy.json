@@ -1,0 +1,46 @@
+{
+  "rule_id": "RR-FN-ORG-OUTREACH-001",
+  "status": "ADOPTED",
+  "durable": true,
+  "no_drift": true,
+  "fail_closed": true,
+  "generic_inbox": {
+    "forwarding_hub_prohibited": true,
+    "mass_internal_forward_request_prohibited": true,
+    "one_organization_level_message_allowed_when_best_route": true,
+    "prefer_verified_direct_professional_email": true
+  },
+  "throttles": {
+    "max_new_initial_per_domain_24h": 1,
+    "max_distinct_people_per_org_14d": 3,
+    "exception_requires_documented_basis": true,
+    "simultaneous_shotgun_outreach_prohibited": true
+  },
+  "negative_signals": {
+    "spam_complaint_action": "DOMAIN_HOLD",
+    "spam_complaint_auto_clear": false,
+    "organization_wide_dnc_action": "DOMAIN_SUPPRESSION",
+    "individual_unsubscribe_scope_default": "INDIVIDUAL",
+    "suppression_precedence_over_growth": true
+  },
+  "owner_alerts": {
+    "domain_hold_requires_immediate_email": true,
+    "domain_hold_requires_persistent_console_alert": true,
+    "org_suppression_requires_immediate_email": true,
+    "org_suppression_requires_persistent_console_alert": true,
+    "sms_required": false
+  },
+  "live_action": {
+    "authorizes_sending": false,
+    "authorizes_volume_increase": false,
+    "authorizes_campaign_start": false,
+    "authorizes_hold_removal": false,
+    "authorizes_suppression_removal": false
+  },
+  "current_pilot": {
+    "campaign_id": 1553662,
+    "require_unique_domains": true,
+    "first_touch_only": true,
+    "organization_level_generic_inbox_allowed": true
+  }
+}
