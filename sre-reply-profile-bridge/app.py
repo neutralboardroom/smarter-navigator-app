@@ -1308,6 +1308,7 @@ def startup():
         flush=True,
     )
     threading.Thread(target=test_mailshake_connection, daemon=True).start()
+    threading.Thread(target=log_compliance_test_status_once, daemon=True).start()
     if MAILSHAKE_API_KEY and MAILSHAKE_CAMPAIGN_ID > 0:
         threading.Thread(target=mailshake_monitor_runner, daemon=True).start()
         if MAILSHAKE_PUSH_SETUP_ON_STARTUP and MAILSHAKE_PUSH_SECRET:
@@ -1337,6 +1338,17 @@ def health():
         "mailshakeCampaignId": MAILSHAKE_CAMPAIGN_ID or None,
         "mailshakeLastPollAt": _state["mailshake"].get("lastPollAt"),
     }
+
+
+def log_compliance_test_status_once():
+    try:
+        status = mailshake_compliance_test_status()
+        print(
+            "SRE_BRIDGE COMPLIANCE_TEST_STATUS " + json.dumps(status, sort_keys=True),
+            flush=True,
+        )
+    except Exception as exc:
+        print(f"SRE_BRIDGE COMPLIANCE_TEST_STATUS ERROR {exc}", flush=True)
 
 
 @app.get("/mailshake/compliance-test/status")
