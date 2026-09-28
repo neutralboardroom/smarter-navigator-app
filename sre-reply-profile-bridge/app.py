@@ -22,6 +22,7 @@ MAILSHAKE_PUSH_SECRET = os.environ.get("MAILSHAKE_PUSH_SECRET", "").strip()
 MAILSHAKE_PUBLIC_BASE_URL = os.environ.get("MAILSHAKE_PUBLIC_BASE_URL", "https://sre-reply-profile-bridge.onrender.com").rstrip("/")
 MAILSHAKE_PUSH_SETUP_ON_STARTUP = os.environ.get("MAILSHAKE_PUSH_SETUP_ON_STARTUP", "false").strip().lower() in {"1", "true", "yes"}
 MAILSHAKE_COMPLIANCE_HOLD = os.environ.get("MAILSHAKE_COMPLIANCE_HOLD", "true").strip().lower() in {"1", "true", "yes"}
+RFC8058_SCALE_PROOF = os.environ.get("RFC8058_SCALE_PROOF", "false").strip().lower() in {"1", "true", "yes"}
 DELIVERABILITY_POLICY_PATH = os.path.join(os.path.dirname(__file__), "roger_deliverability_policy.json")
 ORG_SAFETY_POLICY_PATH = os.path.join(os.path.dirname(__file__), "org_domain_safety_policy.json")
 ORG_SAFETY_STATE_PATH = os.path.join(os.path.dirname(__file__), "org_domain_safety_state.json")
@@ -368,8 +369,20 @@ def load_deliverability_policy():
 def policy_pause_reason(sent_count, bounce_count, unsubscribe_count, roster_exact, campaign, duplicate_domains, held_domains, suppressed_domains, complaint_domains, org_dnc_domains):
     policy = load_deliverability_policy()
     current = policy.get("current_pilot") or {}
-    if MAILSHAKE_COMPLIANCE_HOLD:
+    compliance = policy.get("compliance") or {}
+    current_campaign_id = int(current.get("campaign_id") or 0)
+    current_daily_cap = int(current.get("max_daily_sends") or 0)
+    low_volume_exception = compliance.get("rfc8058_low_volume_pilot_exception") or {}
+    approved_exception = (
+        bool(low_volume_exception.get("approved_by_owner"))
+        and int(low_volume_exception.get("applies_only_to_current_pilot_campaign_id") or 0) == current_campaign_id
+        and current_campaign_id == MAILSHAKE_CAMPAIGN_ID
+        and current_daily_cap <= int(low_volume_exception.get("max_daily_sends") or 10)
+    )
+    if MAILSHAKE_COMPLIANCE_HOLD and not approved_exception:
         return "COMPLIANCE_FOOTER_AND_UNSUBSCRIBE_CONFIRMATION_REQUIRED"
+    if current_daily_cap > 10 and not RFC8058_SCALE_PROOF:
+        return "RFC8058_SCALE_PROOF_REQUIRED"
     if complaint_domains:
         return "SPAM_COMPLAINT_DOMAIN_HOLD"
     if org_dnc_domains:
@@ -1337,6 +1350,7 @@ def health():
         "mailshakeConnection": _state["mailshake"]["connection"],
         "mailshakeCampaignId": MAILSHAKE_CAMPAIGN_ID or None,
         "mailshakeLastPollAt": _state["mailshake"].get("lastPollAt"),
+        "rfc8058ScaleProof": RFC8058_SCALE_PROOF,
     }
 
 
