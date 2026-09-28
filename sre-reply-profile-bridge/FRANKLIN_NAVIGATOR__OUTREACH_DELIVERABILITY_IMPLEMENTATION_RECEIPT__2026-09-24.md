@@ -80,3 +80,26 @@ Disposition:
 Next gate:
 - Obtain authoritative Mailshake answer OR independently qualify another sending path that demonstrably emits both required RFC 8058 headers in an actual received message.
 - Re-test with a real owner-controlled Gmail delivery before releasing the first-10 campaign.
+
+
+## Owner-approved low-volume RFC 8058 disposition — 2026-09-28
+
+Owner explicitly approved proceeding with the existing Franklin Navigator first-10 pilot without RFC 8058 headers because the pilot is capped at 10/day and remains subject to all other verified protections.
+
+Release conditions retained:
+- visible unsubscribe link: required and already tested working
+- durable suppression: required and already tested working
+- SPF: PASS
+- DKIM: PASS
+- DMARC: PASS
+- valid physical postal address: required
+- open tracking: OFF
+- click tracking: OFF
+- first-touch only
+- no automatic scale-up
+- any bounce/unsubscribe/complaint during the low-volume pilot remains a fail-closed review trigger
+- organization/domain suppression and hold rules remain fully active
+
+RFC 8058 remains a mandatory scale gate before any material expansion approaching mailbox-provider bulk-sender thresholds and after any material provider/mailbox/SMTP/delivery-architecture change.
+
+This approval does not authorize follow-ups, volume increases, new mailboxes, or provider changes.
