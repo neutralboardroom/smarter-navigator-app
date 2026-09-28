@@ -1,14 +1,22 @@
 import json
+import hmac
+import hashlib
+import base64
+import smtplib
+import ssl
 import os
 import re
 import threading
 import time
 from datetime import datetime, timezone
+from email.message import EmailMessage
+from email.utils import formatdate, make_msgid
 from urllib.parse import parse_qs, urlparse
 
 import requests
 from bs4 import BeautifulSoup
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import HTMLResponse, PlainTextResponse
 
 API_BASE = "https://api.reply.io/v3"
 REPLY_API_KEY = os.environ.get("REPLY_API_KEY", "").strip()
@@ -22,6 +30,15 @@ MAILSHAKE_PUSH_SECRET = os.environ.get("MAILSHAKE_PUSH_SECRET", "").strip()
 MAILSHAKE_PUBLIC_BASE_URL = os.environ.get("MAILSHAKE_PUBLIC_BASE_URL", "https://sre-reply-profile-bridge.onrender.com").rstrip("/")
 MAILSHAKE_PUSH_SETUP_ON_STARTUP = os.environ.get("MAILSHAKE_PUSH_SETUP_ON_STARTUP", "false").strip().lower() in {"1", "true", "yes"}
 MAILSHAKE_COMPLIANCE_HOLD = os.environ.get("MAILSHAKE_COMPLIANCE_HOLD", "true").strip().lower() in {"1", "true", "yes"}
+FN_OUTREACH_SMTP_HOST = os.environ.get("FN_OUTREACH_SMTP_HOST", "smtp.zoho.com").strip()
+FN_OUTREACH_SMTP_PORT = int(os.environ.get("FN_OUTREACH_SMTP_PORT", "465") or 465)
+FN_OUTREACH_SMTP_USER = os.environ.get("FN_OUTREACH_SMTP_USER", "community@franklinnavigator.com").strip()
+FN_OUTREACH_SMTP_PASSWORD = os.environ.get("FN_OUTREACH_SMTP_PASSWORD", "").strip()
+FN_OUTREACH_PUBLIC_BASE_URL = os.environ.get("FN_OUTREACH_PUBLIC_BASE_URL", MAILSHAKE_PUBLIC_BASE_URL).rstrip("/")
+FN_OUTREACH_OWNER_TEST_EMAIL = os.environ.get("FN_OUTREACH_OWNER_TEST_EMAIL", "reachrgnow@gmail.com").strip()
+FN_OUTREACH_OWNER_TEST_ON_STARTUP = os.environ.get("FN_OUTREACH_OWNER_TEST_ON_STARTUP", "false").strip().lower() in {"1", "true", "yes"}
+FN_OUTREACH_LIST_ID = "franklin-navigator-community-outreach.franklinnavigator.com"
+FN_UNSUBSCRIBE_SIGNING_SECRET = os.environ.get("FN_UNSUBSCRIBE_SIGNING_SECRET", "").strip()
 RFC8058_SCALE_PROOF = os.environ.get("RFC8058_SCALE_PROOF", "false").strip().lower() in {"1", "true", "yes"}
 DELIVERABILITY_POLICY_PATH = os.path.join(os.path.dirname(__file__), "roger_deliverability_policy.json")
 ORG_SAFETY_POLICY_PATH = os.path.join(os.path.dirname(__file__), "org_domain_safety_policy.json")
@@ -229,6 +246,194 @@ def test_mailshake_connection():
         print(f"SRE_BRIDGE MAILSHAKE_CONNECTION FAIL {error}", flush=True)
         return False
 
+
+
+
+
+def _urlsafe_b64encode(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).decode("ascii").rstrip("=")
+
+
+def _urlsafe_b64decode(value: str) -> bytes:
+    padding = "=" * (-len(value) % 4)
+    return base64.urlsafe_b64decode(value + padding)
+
+
+def make_unsubscribe_token(email: str) -> str:
+    if not FN_UNSUBSCRIBE_SIGNING_SECRET:
+        raise RuntimeError("FN_UNSUBSCRIBE_SIGNING_SECRET is not configured")
+    payload = json.dumps(
+        {"e": str(email or "").strip().lower(), "l": FN_OUTREACH_LIST_ID, "v": 1},
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    encoded = _urlsafe_b64encode(payload)
+    signature = hmac.new(
+        FN_UNSUBSCRIBE_SIGNING_SECRET.encode("utf-8"),
+        encoded.encode("ascii"),
+        hashlib.sha256,
+    ).digest()
+    return encoded + "." + _urlsafe_b64encode(signature)
+
+
+def parse_unsubscribe_token(token: str) -> str:
+    try:
+        if not FN_UNSUBSCRIBE_SIGNING_SECRET:
+            raise ValueError("signing secret missing")
+        encoded, supplied_sig = token.split(".", 1)
+        expected_sig = _urlsafe_b64encode(
+            hmac.new(
+                FN_UNSUBSCRIBE_SIGNING_SECRET.encode("utf-8"),
+                encoded.encode("ascii"),
+                hashlib.sha256,
+            ).digest()
+        )
+        if not hmac.compare_digest(supplied_sig, expected_sig):
+            raise ValueError("signature mismatch")
+        payload = json.loads(_urlsafe_b64decode(encoded).decode("utf-8"))
+        if payload.get("l") != FN_OUTREACH_LIST_ID or int(payload.get("v") or 0) != 1:
+            raise ValueError("list mismatch")
+        email = str(payload.get("e") or "").strip().lower()
+        if "@" not in email:
+            raise ValueError("invalid email")
+        return email
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Invalid unsubscribe token") from exc
+
+
+def persist_unsubscribe(email: str):
+    mailshake_api(
+        "POST",
+        "/recipients/unsubscribe",
+        data={"emailAddresses": email},
+    )
+    try:
+        mailshake_api(
+            "POST",
+            "/campaigns/pause",
+            data={"campaignID": MAILSHAKE_CAMPAIGN_ID},
+        )
+    except Exception as exc:
+        print(f"SRE_BRIDGE UNSUBSCRIBE_PAUSE ERROR {exc}", flush=True)
+    print(
+        "SRE_BRIDGE ONE_CLICK_UNSUBSCRIBE "
+        + json.dumps(
+            {"email": email, "campaignId": MAILSHAKE_CAMPAIGN_ID, "at": now_iso()},
+            sort_keys=True,
+        ),
+        flush=True,
+    )
+
+
+def build_franklin_message(to_email: str, subject: str, plain_body: str, html_body: str = "") -> EmailMessage:
+    token = make_unsubscribe_token(to_email)
+    one_click_url = f"{FN_OUTREACH_PUBLIC_BASE_URL}/unsubscribe/one-click/{token}"
+    visible_url = f"{FN_OUTREACH_PUBLIC_BASE_URL}/unsubscribe/{token}"
+    msg = EmailMessage()
+    msg["From"] = f"Franklin Navigator Community Team <{FN_OUTREACH_SMTP_USER}>"
+    msg["To"] = to_email
+    msg["Reply-To"] = FN_OUTREACH_SMTP_USER
+    msg["Subject"] = subject
+    msg["Date"] = formatdate(localtime=True)
+    msg["Message-ID"] = make_msgid(domain="franklinnavigator.com")
+    msg["List-ID"] = f"<{FN_OUTREACH_LIST_ID}>"
+    msg["List-Unsubscribe"] = f"<{one_click_url}>"
+    msg["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click"
+    footer_text = (
+        "\n\nThis is a Franklin Navigator community outreach email.\n\n"
+        "Franklin Navigator Community Team\n"
+        "Franklin Navigator\n"
+        "community@franklinnavigator.com\n"
+        "(615) 656-7020\n"
+        "franklinnavigator.com\n\n"
+        f"Unsubscribe: {visible_url}\n"
+        "2020 Fieldstone Pkwy, Ste 900, Franklin, TN 37069"
+    )
+    msg.set_content(plain_body.rstrip() + footer_text)
+    if html_body:
+        footer_html = (
+            '<br><br>This is a Franklin Navigator community outreach email.<br><br>'
+            'Franklin Navigator Community Team<br>'
+            'Franklin Navigator<br>'
+            'community@franklinnavigator.com<br>'
+            '(615) 656-7020<br>'
+            'franklinnavigator.com<br><br>'
+            f'<a href="{visible_url}">Unsubscribe</a><br>'
+            '2020 Fieldstone Pkwy, Ste 900, Franklin, TN 37069'
+        )
+        msg.add_alternative(html_body.rstrip() + footer_html, subtype="html")
+    return msg
+
+
+def send_franklin_smtp_message(to_email: str, subject: str, plain_body: str, html_body: str = "", bcc_email: str = ""):
+    if not FN_OUTREACH_SMTP_PASSWORD:
+        raise RuntimeError("FN_OUTREACH_SMTP_PASSWORD is not configured")
+    msg = build_franklin_message(to_email, subject, plain_body, html_body)
+    recipients = [to_email]
+    if bcc_email and bcc_email.lower() != to_email.lower():
+        recipients.append(bcc_email)
+    context = ssl.create_default_context()
+    with smtplib.SMTP_SSL(
+        FN_OUTREACH_SMTP_HOST,
+        FN_OUTREACH_SMTP_PORT,
+        context=context,
+        timeout=30,
+    ) as smtp:
+        smtp.login(FN_OUTREACH_SMTP_USER, FN_OUTREACH_SMTP_PASSWORD)
+        smtp.send_message(msg, to_addrs=recipients)
+    return msg["Message-ID"]
+
+
+def send_owner_rfc8058_test_once():
+    try:
+        message_id = send_franklin_smtp_message(
+            FN_OUTREACH_OWNER_TEST_EMAIL,
+            "Franklin Navigator RFC 8058 compliance test",
+            "This is a controlled Franklin Navigator RFC 8058 compliance test. No action is required.",
+        )
+        print(
+            "SRE_BRIDGE RFC8058_OWNER_TEST SENT "
+            + json.dumps({"to": FN_OUTREACH_OWNER_TEST_EMAIL, "messageId": message_id}, sort_keys=True),
+            flush=True,
+        )
+    except Exception as exc:
+        print(f"SRE_BRIDGE RFC8058_OWNER_TEST ERROR {exc}", flush=True)
+
+
+@app.post("/unsubscribe/one-click/{token}", response_class=PlainTextResponse)
+async def one_click_unsubscribe(token: str, request: Request):
+    email = parse_unsubscribe_token(token)
+    body = (await request.body()).decode("utf-8", "ignore")
+    if "List-Unsubscribe=One-Click" not in body:
+        raise HTTPException(status_code=400, detail="Invalid one-click unsubscribe request")
+    persist_unsubscribe(email)
+    return "Unsubscribed"
+
+
+@app.post("/unsubscribe/confirm/{token}", response_class=HTMLResponse)
+async def confirm_visible_unsubscribe(token: str, request: Request):
+    email = parse_unsubscribe_token(token)
+    body = (await request.body()).decode("utf-8", "ignore")
+    values = parse_qs(body)
+    if values.get("confirm", [""])[0] != "1":
+        raise HTTPException(status_code=400, detail="Confirmation required")
+    persist_unsubscribe(email)
+    return HTMLResponse(
+        "<html><body><h1>Unsubscribed</h1><p>You will not receive further Franklin Navigator outreach at this address.</p></body></html>"
+    )
+
+
+@app.get("/unsubscribe/{token}", response_class=HTMLResponse)
+def visible_unsubscribe(token: str):
+    parse_unsubscribe_token(token)
+    safe_token = re.sub(r"[^A-Za-z0-9_.-]", "", token)
+    return HTMLResponse(
+        "<html><body><h1>Unsubscribe from Franklin Navigator outreach</h1>"
+        "<p>Click the button below to stop future Franklin Navigator outreach at this email address.</p>"
+        f'<form method="post" action="/unsubscribe/confirm/{safe_token}">'
+        '<input type="hidden" name="confirm" value="1">'
+        '<button type="submit">Unsubscribe</button></form></body></html>'
+    )
 
 
 
@@ -1336,6 +1541,8 @@ def startup():
         threading.Thread(target=runner, daemon=True).start()
     if OWNER_TEST_ON_STARTUP:
         threading.Thread(target=send_owner_test_once, daemon=True).start()
+    if FN_OUTREACH_OWNER_TEST_ON_STARTUP:
+        threading.Thread(target=send_owner_rfc8058_test_once, daemon=True).start()
 
 
 @app.get("/health")
@@ -1351,6 +1558,8 @@ def health():
         "mailshakeCampaignId": MAILSHAKE_CAMPAIGN_ID or None,
         "mailshakeLastPollAt": _state["mailshake"].get("lastPollAt"),
         "rfc8058ScaleProof": RFC8058_SCALE_PROOF,
+        "fnSmtpConfigured": bool(FN_OUTREACH_SMTP_PASSWORD),
+        "fnUnsubscribeSigningConfigured": bool(FN_UNSUBSCRIBE_SIGNING_SECRET),
     }
 
 
