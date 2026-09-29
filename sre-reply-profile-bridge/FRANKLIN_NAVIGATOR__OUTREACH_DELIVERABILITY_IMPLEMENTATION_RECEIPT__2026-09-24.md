@@ -131,3 +131,19 @@ Disposition:
 - Mailshake campaign 1553662 remains paused and must not be unpaused for sending because Mailshake itself does not emit the required RFC 8058 headers on the tested SMTP-connected path.
 - Any real first-10 sending moved to the qualified direct path must preserve the same exact roster, first-touch-only copy, owner BCC, business-hours pacing, suppression rules, organization/domain safety rules, and fail-closed monitoring.
 - No scale-up is authorized by this qualification.
+
+
+## Follow-up and complaint-monitoring hardening — 2026-09-29
+
+Implemented:
+- two conservative direct-path follow-up templates, at +5 business days and +7 additional business days
+- no third follow-up enabled for the pilot
+- stop-on-reply, unsubscribe, bounce, complaint, correction/removal request, and organization/domain hold/suppression rules
+- Zoho IMAP monitoring and sent-mail ledger architecture for duplicate prevention and reply/bounce checks
+- Gmail Feedback-ID header for future complaint analysis
+- custom DKIM signing layer prepared so RFC 8058 List-Unsubscribe and List-Unsubscribe-Post headers can both be covered by a Franklin-controlled DKIM signature
+
+Important qualification:
+- the existing Zoho DKIM signature on the first RFC 8058 test covered List-Unsubscribe but did not list List-Unsubscribe-Post in its DKIM h= field.
+- therefore a Franklin-controlled second DKIM signature is being added and must be DNS-verified in a new selector before outreach is released.
+- Mailshake remains paused and is not used for actual sends.
