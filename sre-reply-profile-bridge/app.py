@@ -2343,8 +2343,7 @@ def startup():
     if FN_ONE_CLICK_SELF_TEST_ON_STARTUP:
         threading.Thread(target=run_one_click_self_test_once, daemon=True).start()
     threading.Thread(target=direct_outreach_runner, daemon=True).start()
-    if FN_PROFILE_PREFLIGHT_ON_STARTUP:
-        threading.Thread(target=profile_preflight_once, daemon=True).start()
+    threading.Thread(target=profile_preflight_once, daemon=True).start()
     if FN_SUPPRESSION_SEED_ON_STARTUP:
         threading.Thread(target=seed_suppression_store_once, daemon=True).start()
 
