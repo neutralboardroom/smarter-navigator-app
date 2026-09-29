@@ -3,7 +3,7 @@
 **Date:** 2026-09-24  
 **Rule:** RR-FN-OUTREACH-DELIVERABILITY-2026-09-24-V1  
 **Campaign:** Mailshake 1553662 — Franklin Navigator — First 10 Pilot — First Touch Only  
-**Status:** FAIL-CLOSED PENDING COMPLIANCE FOOTER / VISIBLE UNSUBSCRIBE VERIFICATION
+**Status:** QUALIFIED FOR DIRECT-ZOHO FIRST-10 PILOT / MAILSHAKE RUNTIME RETIRED
 
 ## Research disposition
 
@@ -147,3 +147,53 @@ Important qualification:
 - the existing Zoho DKIM signature on the first RFC 8058 test covered List-Unsubscribe but did not list List-Unsubscribe-Post in its DKIM h= field.
 - therefore a Franklin-controlled second DKIM signature is being added and must be DNS-verified in a new selector before outreach is released.
 - Mailshake remains paused and is not used for actual sends.
+
+
+## Final direct-Zoho qualification and Mailshake retirement — 2026-09-29
+
+Final owner-controlled Gmail test verified the current production direct-Zoho message path:
+- SPF: PASS
+- Zoho DKIM: PASS
+- Franklin-controlled DKIM selector `fnmail1`: PASS
+- DMARC: PASS
+- TLS transport: PASS
+- clean plain HTTPS `List-Unsubscribe` header: PASS
+- `List-Unsubscribe-Post: List-Unsubscribe=One-Click`: PASS
+- Franklin `fnmail1` DKIM signature covers both unsubscribe headers: PASS
+- `Feedback-ID`: PRESENT
+- visible body unsubscribe link: PRESENT
+- physical postal address: PRESENT
+- truthful From/Reply-To identity: PRESENT
+- open/click tracking: OFF
+
+One-click suppression test after Mailshake decoupling:
+- HTTPS POST: HTTP 200
+- durable suppression destination: Zoho IMAP suppression store
+- result: PASS
+
+Direct runtime verification with Mailshake disabled:
+- Zoho IMAP connection: PASS
+- exact first-10 eligible roster: 10
+- initial sends: 0
+- follow-up 1 sends: 0
+- follow-up 2 sends: 0
+- global hold: none
+- direct suppression store: Zoho IMAP
+- duplicate/send ledger: Zoho Sent Mail
+- Mailshake required for direct sending: NO
+- Mailshake required for suppression: NO
+- Mailshake required for reply/bounce monitoring: NO
+- Mailshake runtime calls: DISABLED
+
+Authorized sequence:
+- initial message
+- follow-up 1 after 5 business days
+- final follow-up after another 7 business days
+- stop on any reply/unsubscribe/bounce/complaint/correction-removal request/domain hold or suppression
+- no third follow-up
+- no automatic scale-up
+
+Disposition:
+- Mailshake may be canceled without affecting the qualified Franklin Navigator direct-Zoho outreach path.
+- The legacy Mailshake campaign must not be unpaused or used to send.
+- Any material provider/mailbox/SMTP/DKIM/domain/unsubscribe-endpoint change requires fresh owner-controlled delivery verification before further outreach.
