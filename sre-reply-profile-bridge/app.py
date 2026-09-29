@@ -60,6 +60,7 @@ FN_SUPPRESSION_SEED_ON_STARTUP = os.environ.get("FN_SUPPRESSION_SEED_ON_STARTUP"
 FN_DIRECT_OUTREACH_ENABLED = os.environ.get("FN_DIRECT_OUTREACH_ENABLED", "false").strip().lower() in {"1", "true", "yes"}
 FN_INITIAL_SEND_OVERRIDE = os.environ.get("FN_INITIAL_SEND_OVERRIDE", "false").strip().lower() in {"1", "true", "yes"}
 FN_DIRECT_SEQUENCE_PATH = os.environ.get("FN_DIRECT_SEQUENCE_PATH", os.path.join(os.path.dirname(__file__), "direct_outreach_sequence.json")).strip()
+FN_PROFILE_PREFLIGHT_ON_STARTUP = os.environ.get("FN_PROFILE_PREFLIGHT_ON_STARTUP", "false").strip().lower() in {"1", "true", "yes"}
 RFC8058_SCALE_PROOF = os.environ.get("RFC8058_SCALE_PROOF", "false").strip().lower() in {"1", "true", "yes"}
 DELIVERABILITY_POLICY_PATH = os.path.join(os.path.dirname(__file__), "roger_deliverability_policy.json")
 ORG_SAFETY_POLICY_PATH = os.path.join(os.path.dirname(__file__), "org_domain_safety_policy.json")
@@ -873,6 +874,54 @@ def _within_direct_send_window(now_local, sequence):
     return start_h * 60 + start_m <= minutes < end_h * 60 + end_m
 
 
+def _profile_url_preflight(recipient: dict):
+    profile_url = str(recipient.get("profileUrl") or "").strip()
+    profile_id = str(recipient.get("profileId") or "").strip()
+    parsed = urlparse(profile_url)
+    if parsed.scheme != "https" or parsed.hostname not in {"franklinnavigator.com", "www.franklinnavigator.com"}:
+        raise RuntimeError("PROFILE_URL_INVALID_HOST")
+    if not profile_id or profile_id not in parsed.path:
+        raise RuntimeError("PROFILE_URL_ID_MISMATCH")
+    response = requests.get(
+        profile_url,
+        timeout=20,
+        allow_redirects=True,
+        headers={"User-Agent": "FranklinNavigator-Profile-Preflight/1.0"},
+    )
+    if response.status_code < 200 or response.status_code >= 400:
+        raise RuntimeError(f"PROFILE_URL_HTTP_{response.status_code}")
+    final = urlparse(response.url)
+    if final.hostname not in {"franklinnavigator.com", "www.franklinnavigator.com"}:
+        raise RuntimeError("PROFILE_URL_REDIRECTED_OFF_DOMAIN")
+    return response.status_code
+
+
+def profile_preflight_once():
+    failures = []
+    passed = 0
+    for recipient in FIRST10_CONTACT_ROSTER:
+        try:
+            status = _profile_url_preflight(recipient)
+            passed += 1
+            print(
+                "SRE_BRIDGE PROFILE_PREFLIGHT PASS "
+                + json.dumps({"email": recipient.get("email"), "profileId": recipient.get("profileId"), "status": status}, sort_keys=True),
+                flush=True,
+            )
+        except Exception as exc:
+            failures.append({"email": recipient.get("email"), "profileId": recipient.get("profileId"), "error": str(exc)})
+            print(
+                "SRE_BRIDGE PROFILE_PREFLIGHT FAIL "
+                + json.dumps(failures[-1], sort_keys=True),
+                flush=True,
+            )
+    print(
+        "SRE_BRIDGE PROFILE_PREFLIGHT SUMMARY "
+        + json.dumps({"passed": passed, "failed": len(failures)}, sort_keys=True),
+        flush=True,
+    )
+
+
 def _render_direct_body(template: str, recipient: dict):
     return (
         str(template or "")
@@ -1013,6 +1062,12 @@ def _direct_scan_once(send_if_due=False):
                             break
                         subject = str(step.get("subject") or "").strip()
                         body = _render_direct_body(step.get("body") or "", recipient)
+                        try:
+                            _profile_url_preflight(recipient)
+                        except Exception as exc:
+                            global_hold = global_hold or f"PROFILE_URL_PREFLIGHT_FAIL:{email_addr}"
+                            alerts.append({"priority":"HIGH","triggerType":"PROFILE_URL_PREFLIGHT_FAIL","email":email_addr,"error":str(exc)})
+                            break
                         if not _ledger_reserve(client, key, email_addr, subject):
                             break
                         message_id = send_franklin_smtp_message(
@@ -2288,6 +2343,8 @@ def startup():
     if FN_ONE_CLICK_SELF_TEST_ON_STARTUP:
         threading.Thread(target=run_one_click_self_test_once, daemon=True).start()
     threading.Thread(target=direct_outreach_runner, daemon=True).start()
+    if FN_PROFILE_PREFLIGHT_ON_STARTUP:
+        threading.Thread(target=profile_preflight_once, daemon=True).start()
     if FN_SUPPRESSION_SEED_ON_STARTUP:
         threading.Thread(target=seed_suppression_store_once, daemon=True).start()
 
