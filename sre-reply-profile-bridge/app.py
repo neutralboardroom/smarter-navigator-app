@@ -55,6 +55,7 @@ FN_FEEDBACK_SENDER_ID = os.environ.get("FN_FEEDBACK_SENDER_ID", "FRNAVGTR").stri
 FN_OUTREACH_IMAP_HOST = os.environ.get("FN_OUTREACH_IMAP_HOST", "imap.zoho.com").strip()
 FN_OUTREACH_IMAP_PORT = int(os.environ.get("FN_OUTREACH_IMAP_PORT", "993") or 993)
 FN_SUPPRESSION_MAILBOX = os.environ.get("FN_SUPPRESSION_MAILBOX", "Franklin Navigator Suppressions").strip()
+FN_SEND_LEDGER_MAILBOX = os.environ.get("FN_SEND_LEDGER_MAILBOX", "Franklin Navigator Outreach Ledger").strip()
 FN_SUPPRESSION_SEED_ON_STARTUP = os.environ.get("FN_SUPPRESSION_SEED_ON_STARTUP", "false").strip().lower() in {"1", "true", "yes"}
 FN_DIRECT_OUTREACH_ENABLED = os.environ.get("FN_DIRECT_OUTREACH_ENABLED", "false").strip().lower() in {"1", "true", "yes"}
 FN_INITIAL_SEND_OVERRIDE = os.environ.get("FN_INITIAL_SEND_OVERRIDE", "false").strip().lower() in {"1", "true", "yes"}
@@ -72,6 +73,8 @@ FIRST10_PILOT_EMAIL_ACCOUNT_ID = 954440
 FIRST10_STAGE_FIELDS_ON_STARTUP = os.environ.get("FIRST10_STAGE_FIELDS_ON_STARTUP", "").strip().lower() in {"1", "true", "yes"}
 FIRST10_DOMAIN_HEALTH_PROBE_ON_STARTUP = os.environ.get("FIRST10_DOMAIN_HEALTH_PROBE_ON_STARTUP", "").strip().lower() in {"1", "true", "yes"}
 FIRST10_PILOT_SEQUENCE_ID = 1776919
+FIRST10_INCIDENT_NO_FOLLOWUP_EMAILS = {"catering@littlehatsmarket.com"}
+FIRST10_INCIDENT_SEEDED_SENT_AT = {"catering@littlehatsmarket.com": "2026-09-29T06:35:58+00:00"}
 FIRST10_CONTACT_ROSTER = [
     {"contactId": 762750302, "email": "catering@littlehatsmarket.com", "business": "Little Hats Italian Market (Cool Springs)", "outreachGreeting": "Little Hats Italian Market", "profileId": "FR-ORG-17d04eafd603-little-hats-italian-market-cool-springs", "profileUrl": "https://franklinnavigator.com/profiles/FR-ORG-17d04eafd603-little-hats-italian-market-cool-springs/"},
     {"contactId": 762750303, "email": "chowell@healthmarkets.com", "business": "Chris Howell Insurance", "outreachGreeting": "Chris Howell Insurance", "profileId": "FR-ORG-3e820e6c84e2-chris-howell-insurance", "profileUrl": "https://franklinnavigator.com/profiles/FR-ORG-3e820e6c84e2-chris-howell-insurance/"},
@@ -640,6 +643,95 @@ def _imap_search_sent_records(client):
     return mailbox, records
 
 
+def _ensure_send_ledger_mailbox(client):
+    status, _ = client.select(f'"{FN_SEND_LEDGER_MAILBOX}"', readonly=True)
+    if status == "OK":
+        return
+    client.create(f'"{FN_SEND_LEDGER_MAILBOX}"')
+    status2, _ = client.select(f'"{FN_SEND_LEDGER_MAILBOX}"', readonly=True)
+    if status2 != "OK":
+        raise RuntimeError("Unable to create outreach ledger mailbox")
+
+
+def _ledger_records(client):
+    _ensure_send_ledger_mailbox(client)
+    status, data = client.search(None, "ALL")
+    if status != "OK":
+        raise RuntimeError("outreach ledger search failed")
+    ids = [x for x in (data[0] or b"").split() if x]
+    records = []
+    for msg_id in ids[-1000:]:
+        status2, msg_data = client.fetch(
+            msg_id,
+            '(BODY.PEEK[HEADER.FIELDS (DATE TO SUBJECT MESSAGE-ID X-FRANKLIN-OUTREACH-KEY X-FRANKLIN-LEDGER-STATUS)])',
+        )
+        if status2 != "OK":
+            continue
+        raw = b"".join(
+            part[1] for part in msg_data
+            if isinstance(part, tuple) and isinstance(part[1], (bytes, bytearray))
+        )
+        if not raw:
+            continue
+        msg = BytesParser(policy=email_policy.default).parsebytes(raw)
+        try:
+            from email.utils import parsedate_to_datetime
+            dt = parsedate_to_datetime(msg.get("Date"))
+            if dt and dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+        except Exception:
+            dt = None
+        records.append({
+            "key": str(msg.get("X-Franklin-Outreach-Key") or "").strip(),
+            "status": str(msg.get("X-Franklin-Ledger-Status") or "").strip().upper(),
+            "to": str(msg.get("To") or "").strip().lower(),
+            "subject": str(msg.get("Subject") or "").strip(),
+            "messageId": str(msg.get("Message-ID") or "").strip(),
+            "date": dt,
+        })
+    return FN_SEND_LEDGER_MAILBOX, records
+
+
+def _ledger_has_key(client, key: str):
+    _ensure_send_ledger_mailbox(client)
+    status, data = client.search(None, "HEADER", "X-Franklin-Outreach-Key", key)
+    if status != "OK":
+        raise RuntimeError("outreach ledger key search failed")
+    return bool((data[0] or b"").strip())
+
+
+def _append_ledger_marker(client, key: str, email_addr: str, subject: str, status_value: str, message_id: str = ""):
+    _ensure_send_ledger_mailbox(client)
+    marker = EmailMessage(policy=email_policy.SMTP)
+    marker["From"] = FN_OUTREACH_SMTP_USER
+    marker["To"] = email_addr
+    marker["Subject"] = subject
+    marker["Date"] = formatdate(localtime=True)
+    marker["Message-ID"] = message_id or make_msgid(domain="franklinnavigator.com")
+    marker["X-Franklin-Outreach-Key"] = key
+    marker["X-Franklin-Ledger-Status"] = status_value
+    marker.set_content("Franklin Navigator outreach send ledger marker.")
+    result, _ = client.append(
+        f'"{FN_SEND_LEDGER_MAILBOX}"',
+        "\\Seen",
+        imaplib.Time2Internaldate(time.time()),
+        marker.as_bytes(policy=email_policy.SMTP),
+    )
+    if result != "OK":
+        raise RuntimeError("outreach ledger append failed")
+
+
+def _ledger_reserve(client, key: str, email_addr: str, subject: str):
+    if _ledger_has_key(client, key):
+        return False
+    _append_ledger_marker(client, key, email_addr, subject, "RESERVED")
+    return True
+
+
+def _ledger_mark_sent(client, key: str, email_addr: str, subject: str, message_id: str):
+    _append_ledger_marker(client, key, email_addr, subject, "SENT", message_id)
+
+
 def _imap_has_reply_since(client, sender_email: str, since_dt):
     status, _ = client.select("INBOX", readonly=True)
     if status != "OK":
@@ -810,8 +902,12 @@ def _direct_scan_once(send_if_due=False):
     now_local = datetime.now(tz)
     alerts = []
     with _imap_connect() as client:
-        sent_mailbox, records = _imap_search_sent_records(client)
-        record_map = _direct_record_map(records)
+        sent_mailbox, records = _ledger_records(client)
+        for seed_email, seed_iso in FIRST10_INCIDENT_SEEDED_SENT_AT.items():
+            seed_key = _direct_key(seed_email, "initial")
+            if not any(r.get("key") == seed_key and r.get("status") == "SENT" for r in records):
+                records.append({"key": seed_key, "status": "SENT", "to": seed_email, "subject": "Your Franklin Navigator community profile", "messageId": "INCIDENT-SEED", "date": datetime.fromisoformat(seed_iso)})
+        record_map = _direct_record_map([r for r in records if r.get("status") == "SENT"])
         unsubscribed = _zoho_suppression_set()
         zoho_domain_suppressions = _zoho_domain_suppression_set()
         suppressed = []
@@ -847,6 +943,8 @@ def _direct_scan_once(send_if_due=False):
             for index, step in enumerate(sequence.get("steps") or []):
                 step_id = str(step.get("id") or "")
                 key = _direct_key(email_addr, step_id)
+                if email_addr in FIRST10_INCIDENT_NO_FOLLOWUP_EMAILS and step_id != "initial":
+                    break
                 sent_record = record_map.get(key)
                 if sent_record:
                     if step_id == "initial":
@@ -915,6 +1013,8 @@ def _direct_scan_once(send_if_due=False):
                             break
                         subject = str(step.get("subject") or "").strip()
                         body = _render_direct_body(step.get("body") or "", recipient)
+                        if not _ledger_reserve(client, key, email_addr, subject):
+                            break
                         message_id = send_franklin_smtp_message(
                             email_addr,
                             subject,
@@ -922,6 +1022,7 @@ def _direct_scan_once(send_if_due=False):
                             bcc_email=str(sequence.get("owner_bcc") or ""),
                             outreach_key=key,
                         )
+                        _ledger_mark_sent(client, key, email_addr, subject, message_id)
                         print(
                             "SRE_BRIDGE DIRECT_OUTREACH_SENT "
                             + json.dumps(
