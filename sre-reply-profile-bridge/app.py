@@ -165,6 +165,25 @@ _state = {
         "messageId": None,
         "error": None,
     },
+    "directOutreach": {
+        "enabled": FN_DIRECT_OUTREACH_ENABLED,
+        "lastCheckedAt": None,
+        "sentMailbox": None,
+        "imapConnection": "NOT_TESTED",
+        "campaignId": "FN-FIRST10-2026-09",
+        "initialSent": 0,
+        "followup1Sent": 0,
+        "followup2Sent": 0,
+        "stoppedForReply": [],
+        "suppressed": [],
+        "bounceHolds": [],
+        "complaintHolds": [],
+        "ownerAlerts": [],
+        "globalHold": None,
+        "nextEligible": [],
+        "lastSendAt": None,
+        "error": None,
+    },
 }
 
 
@@ -427,6 +446,365 @@ def send_franklin_smtp_message(to_email: str, subject: str, plain_body: str, htm
         smtp.login(FN_OUTREACH_SMTP_USER, FN_OUTREACH_SMTP_PASSWORD)
         smtp.sendmail(FN_OUTREACH_SMTP_USER, recipients, signed)
     return msg["Message-ID"]
+
+
+
+def _resolved_direct_sequence_path():
+    value = FN_DIRECT_SEQUENCE_PATH
+    if os.path.isabs(value):
+        return value
+    if os.path.exists(value):
+        return value
+    return os.path.join(os.path.dirname(__file__), os.path.basename(value))
+
+
+def load_direct_sequence():
+    with open(_resolved_direct_sequence_path(), "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _imap_connect():
+    if not FN_OUTREACH_SMTP_PASSWORD:
+        raise RuntimeError("FN_OUTREACH_SMTP_PASSWORD is not configured")
+    client = imaplib.IMAP4_SSL(FN_OUTREACH_IMAP_HOST, FN_OUTREACH_IMAP_PORT)
+    client.login(FN_OUTREACH_SMTP_USER, FN_OUTREACH_SMTP_PASSWORD)
+    return client
+
+
+def _imap_select_sent(client):
+    candidates = ["Sent", "Sent Messages", "Sent Mail", "INBOX.Sent"]
+    for candidate in candidates:
+        status, _ = client.select(f'"{candidate}"', readonly=True)
+        if status == "OK":
+            return candidate
+    status, data = client.list()
+    if status == "OK":
+        for raw in data or []:
+            text_value = raw.decode("utf-8", "ignore")
+            if "\\Sent" in text_value or re.search(r'(?i)(^|[ "/])sent([ "/]|$)', text_value):
+                mailbox = text_value.split(' "/" ')[-1].strip().strip('"')
+                status2, _ = client.select(f'"{mailbox}"', readonly=True)
+                if status2 == "OK":
+                    return mailbox
+    raise RuntimeError("Zoho Sent mailbox could not be selected")
+
+
+def _imap_search_sent_records(client):
+    mailbox = _imap_select_sent(client)
+    status, data = client.search(None, "HEADER", "X-Franklin-Campaign", "FN-FIRST10-2026-09")
+    if status != "OK":
+        raise RuntimeError("IMAP sent search failed")
+    ids = [x for x in (data[0] or b"").split() if x]
+    records = []
+    for msg_id in ids[-100:]:
+        status2, msg_data = client.fetch(
+            msg_id,
+            '(BODY.PEEK[HEADER.FIELDS (DATE TO SUBJECT MESSAGE-ID X-FRANKLIN-OUTREACH-KEY X-FRANKLIN-CAMPAIGN)])',
+        )
+        if status2 != "OK":
+            continue
+        raw = b"".join(
+            part[1] for part in msg_data
+            if isinstance(part, tuple) and isinstance(part[1], (bytes, bytearray))
+        )
+        if not raw:
+            continue
+        msg = BytesParser(policy=email_policy.default).parsebytes(raw)
+        dt = None
+        try:
+            from email.utils import parsedate_to_datetime
+            dt = parsedate_to_datetime(msg.get("Date"))
+            if dt and dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+        except Exception:
+            dt = None
+        records.append({
+            "key": str(msg.get("X-Franklin-Outreach-Key") or "").strip(),
+            "to": str(msg.get("To") or "").strip().lower(),
+            "subject": str(msg.get("Subject") or "").strip(),
+            "messageId": str(msg.get("Message-ID") or "").strip(),
+            "date": dt,
+        })
+    return mailbox, records
+
+
+def _imap_has_reply_since(client, sender_email: str, since_dt):
+    status, _ = client.select("INBOX", readonly=True)
+    if status != "OK":
+        raise RuntimeError("IMAP inbox select failed")
+    date_text = since_dt.astimezone(timezone.utc).strftime("%d-%b-%Y")
+    status, data = client.search(None, "SINCE", date_text, "FROM", sender_email)
+    return status == "OK" and bool((data[0] or b"").strip())
+
+
+def _imap_detect_delivery_problem(client, target_email: str, since_dt):
+    status, _ = client.select("INBOX", readonly=True)
+    if status != "OK":
+        raise RuntimeError("IMAP inbox select failed")
+    date_text = since_dt.astimezone(timezone.utc).strftime("%d-%b-%Y")
+    status, data = client.search(None, "SINCE", date_text, "TEXT", target_email)
+    if status != "OK":
+        return None
+    ids = [x for x in (data[0] or b"").split() if x][-30:]
+    for msg_id in ids:
+        status2, msg_data = client.fetch(msg_id, "(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT CONTENT-TYPE)] BODY.PEEK[TEXT]<0.4096>)")
+        if status2 != "OK":
+            continue
+        raw = b"".join(
+            part[1] for part in msg_data
+            if isinstance(part, tuple) and isinstance(part[1], (bytes, bytearray))
+        )
+        blob = raw.decode("utf-8", "ignore").lower()
+        if any(x in blob for x in ("feedback-report", "abuse report", "spam complaint", "complaint feedback")):
+            return "complaint"
+        if any(x in blob for x in (
+            "delivery status notification", "undeliverable", "mail delivery subsystem",
+            "delivery failed", "returned mail", "failure notice", "message not delivered"
+        )):
+            return "bounce"
+    return None
+
+
+_unsubscribe_cache = {"checkedAt": 0.0, "emails": set()}
+
+
+def _mailshake_unsubscribe_set(force=False):
+    now_ts = time.time()
+    if not force and now_ts - float(_unsubscribe_cache.get("checkedAt") or 0) < 900:
+        return set(_unsubscribe_cache.get("emails") or set())
+    request_result = mailshake_api(
+        "POST",
+        "/campaigns/export",
+        json={"exportType": "unsubscribes", "timezone": "UTC"},
+    ) or {}
+    status_id = request_result.get("checkStatusID")
+    if not status_id:
+        raise RuntimeError("Mailshake unsubscribe export did not return status ID")
+    export_result = None
+    for _ in range(10):
+        export_result = mailshake_api(
+            "GET",
+            "/campaigns/export-status",
+            params={"statusID": status_id},
+        ) or {}
+        if export_result.get("isFinished"):
+            break
+        time.sleep(1)
+    url = (export_result or {}).get("csvDownloadUrl")
+    if not url:
+        raise RuntimeError("Mailshake unsubscribe export did not finish")
+    response = requests.get(url, timeout=30)
+    response.raise_for_status()
+    emails = set()
+    reader = csv.reader(io.StringIO(response.text))
+    for row in reader:
+        for cell in row:
+            value = str(cell or "").strip().lower()
+            if "@" in value and " " not in value:
+                emails.add(value.strip('"<> '))
+    _unsubscribe_cache["checkedAt"] = now_ts
+    _unsubscribe_cache["emails"] = emails
+    return set(emails)
+
+
+def _business_days_between(start_dt, end_dt, tz):
+    start_date = start_dt.astimezone(tz).date()
+    end_date = end_dt.astimezone(tz).date()
+    count = 0
+    current = start_date
+    while current < end_date:
+        current = current.fromordinal(current.toordinal() + 1)
+        if current.weekday() < 5:
+            count += 1
+    return count
+
+
+def _within_direct_send_window(now_local, sequence):
+    window = sequence.get("send_window") or {}
+    if now_local.weekday() >= 5:
+        return False
+    start_h, start_m = [int(x) for x in str(window.get("start") or "09:00").split(":")]
+    end_h, end_m = [int(x) for x in str(window.get("end") or "16:00").split(":")]
+    minutes = now_local.hour * 60 + now_local.minute
+    return start_h * 60 + start_m <= minutes < end_h * 60 + end_m
+
+
+def _render_direct_body(template: str, recipient: dict):
+    return (
+        str(template or "")
+        .replace("{{Outreach_Greeting}}", str(recipient.get("outreachGreeting") or recipient.get("business") or "there"))
+        .replace("{{Profile_URL}}", str(recipient.get("profileUrl") or ""))
+    )
+
+
+def _direct_record_map(records):
+    mapped = {}
+    for item in records:
+        key = item.get("key") or ""
+        if key:
+            mapped[key] = item
+    return mapped
+
+
+def _direct_key(email: str, step_id: str):
+    digest = hashlib.sha256(email.strip().lower().encode("utf-8")).hexdigest()[:16]
+    return f"fn-first10:{digest}:{step_id}"
+
+
+def _direct_scan_once(send_if_due=False):
+    checked_at = now_iso()
+    sequence = load_direct_sequence()
+    tz = ZoneInfo(sequence.get("timezone") or "America/Chicago")
+    now_local = datetime.now(tz)
+    alerts = []
+    with _imap_connect() as client:
+        sent_mailbox, records = _imap_search_sent_records(client)
+        record_map = _direct_record_map(records)
+        unsubscribed = _mailshake_unsubscribe_set()
+        suppressed = []
+        bounce_holds = []
+        complaint_holds = []
+        stopped_replies = []
+        next_eligible = []
+        initial_sent = followup1_sent = followup2_sent = 0
+        roster_emails = {str(x.get("email") or "").strip().lower() for x in FIRST10_CONTACT_ROSTER}
+        pilot_unsubs = sorted(roster_emails & unsubscribed)
+        global_hold = f"PILOT_UNSUBSCRIBE:{pilot_unsubs[0]}" if pilot_unsubs else None
+
+        dated_records = [r for r in records if r.get("date")]
+        last_send_dt = max([r["date"] for r in dated_records], default=None)
+        today = now_local.date()
+        sends_today = sum(
+            1 for r in dated_records
+            if r["date"].astimezone(tz).date() == today
+        )
+
+        for recipient in FIRST10_CONTACT_ROSTER:
+            email_addr = str(recipient.get("email") or "").strip().lower()
+            domain = email_domain(email_addr)
+            if email_addr in unsubscribed:
+                suppressed.append(email_addr)
+                continue
+            safety_state = load_org_safety_state()
+            if domain in (safety_state.get("domain_holds") or {}) or domain in (safety_state.get("domain_suppressions") or {}):
+                suppressed.append(email_addr)
+                continue
+
+            previous_record = None
+            for index, step in enumerate(sequence.get("steps") or []):
+                step_id = str(step.get("id") or "")
+                key = _direct_key(email_addr, step_id)
+                sent_record = record_map.get(key)
+                if sent_record:
+                    if step_id == "initial":
+                        initial_sent += 1
+                    elif step_id == "followup_1":
+                        followup1_sent += 1
+                    elif step_id == "followup_2":
+                        followup2_sent += 1
+                    previous_record = sent_record
+                    continue
+
+                if index == 0:
+                    eligible = True
+                else:
+                    if not previous_record or not previous_record.get("date"):
+                        eligible = False
+                    else:
+                        if _imap_has_reply_since(client, email_addr, previous_record["date"]):
+                            stopped_replies.append(email_addr)
+                            eligible = False
+                            break
+                        problem = _imap_detect_delivery_problem(client, email_addr, previous_record["date"])
+                        if problem == "bounce":
+                            bounce_holds.append(email_addr)
+                            try:
+                                mailshake_api("POST", "/recipients/unsubscribe", data={"emailAddresses": email_addr})
+                            except Exception:
+                                pass
+                            global_hold = global_hold or f"PILOT_BOUNCE:{email_addr}"
+                            eligible = False
+                            break
+                        if problem == "complaint":
+                            complaint_holds.append(email_addr)
+                            try:
+                                mailshake_api("POST", "/recipients/unsubscribe", data={"emailAddresses": email_addr})
+                            except Exception:
+                                pass
+                            global_hold = global_hold or f"PILOT_COMPLAINT:{email_addr}"
+                            eligible = False
+                            break
+                        wait_days = int(step.get("wait_business_days_after_previous") or 0)
+                        eligible = _business_days_between(previous_record["date"], datetime.now(timezone.utc), tz) >= wait_days
+
+                if eligible:
+                    next_eligible.append({"email": email_addr, "step": step_id})
+                    if send_if_due and not global_hold and _within_direct_send_window(now_local, sequence):
+                        min_gap = int((sequence.get("send_window") or {}).get("minimum_minutes_between_sends") or 12)
+                        if last_send_dt and (datetime.now(timezone.utc) - last_send_dt.astimezone(timezone.utc)).total_seconds() < min_gap * 60:
+                            break
+                        max_daily = int((sequence.get("send_window") or {}).get("max_daily_initial_sends") or 10)
+                        if sends_today >= max_daily:
+                            break
+                        subject = str(step.get("subject") or "").strip()
+                        body = _render_direct_body(step.get("body") or "", recipient)
+                        message_id = send_franklin_smtp_message(
+                            email_addr,
+                            subject,
+                            body,
+                            bcc_email=str(sequence.get("owner_bcc") or ""),
+                            outreach_key=key,
+                        )
+                        print(
+                            "SRE_BRIDGE DIRECT_OUTREACH_SENT "
+                            + json.dumps(
+                                {"email": email_addr, "step": step_id, "messageId": message_id, "at": now_iso()},
+                                sort_keys=True,
+                            ),
+                            flush=True,
+                        )
+                        last_send_dt = datetime.now(timezone.utc)
+                        sends_today += 1
+                    break
+
+        summary = {
+            "enabled": FN_DIRECT_OUTREACH_ENABLED,
+            "lastCheckedAt": checked_at,
+            "sentMailbox": sent_mailbox,
+            "imapConnection": "PASS",
+            "campaignId": sequence.get("campaign_id"),
+            "initialSent": initial_sent,
+            "followup1Sent": followup1_sent,
+            "followup2Sent": followup2_sent,
+            "stoppedForReply": sorted(set(stopped_replies)),
+            "suppressed": sorted(set(suppressed)),
+            "bounceHolds": sorted(set(bounce_holds)),
+            "complaintHolds": sorted(set(complaint_holds)),
+            "ownerAlerts": alerts,
+            "globalHold": global_hold,
+            "nextEligible": next_eligible[:20],
+            "lastSendAt": last_send_dt.isoformat() if last_send_dt else None,
+            "error": None,
+        }
+        with _state_lock:
+            _state["directOutreach"].update(summary)
+        return summary
+
+
+def direct_outreach_runner():
+    while True:
+        try:
+            _direct_scan_once(send_if_due=FN_DIRECT_OUTREACH_ENABLED)
+        except Exception as exc:
+            with _state_lock:
+                _state["directOutreach"].update({
+                    "lastCheckedAt": now_iso(),
+                    "imapConnection": "FAIL",
+                    "error": str(exc),
+                    "globalHold": "DIRECT_OUTREACH_MONITOR_ERROR",
+                })
+            print(f"SRE_BRIDGE DIRECT_OUTREACH ERROR {exc}", flush=True)
+        time.sleep(60)
 
 
 def send_owner_rfc8058_test_once():
@@ -1613,6 +1991,7 @@ def startup():
         threading.Thread(target=send_owner_rfc8058_test_once, daemon=True).start()
     if FN_ONE_CLICK_SELF_TEST_ON_STARTUP:
         threading.Thread(target=run_one_click_self_test_once, daemon=True).start()
+    threading.Thread(target=direct_outreach_runner, daemon=True).start()
 
 
 @app.get("/health")
@@ -1767,6 +2146,12 @@ async def mailshake_push(secret: str, event_name: str, request: Request):
     except Exception as exc:
         print(f"SRE_BRIDGE MAILSHAKE_PUSH ERROR {exc}", flush=True)
         raise HTTPException(status_code=500, detail="Push processing failed")
+
+
+@app.get("/direct-outreach/status")
+def direct_outreach_status():
+    with _state_lock:
+        return dict(_state["directOutreach"])
 
 
 @app.get("/owner/alerts")
