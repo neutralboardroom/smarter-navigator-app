@@ -29,6 +29,7 @@ API_BASE = "https://api.reply.io/v3"
 REPLY_API_KEY = os.environ.get("REPLY_API_KEY", "").strip()
 MAILSHAKE_API_BASE = "https://api.mailshake.com/2017-04-01"
 MAILSHAKE_API_KEY = os.environ.get("MAILSHAKE_API_KEY", "").strip()
+MAILSHAKE_RUNTIME_ENABLED = os.environ.get("MAILSHAKE_RUNTIME_ENABLED", "false").strip().lower() in {"1", "true", "yes"}
 MAILSHAKE_CAMPAIGN_ID = int(os.environ.get("MAILSHAKE_CAMPAIGN_ID", "0") or 0)
 MAILSHAKE_COMPLIANCE_TEST_CAMPAIGN_ID = int(os.environ.get("MAILSHAKE_COMPLIANCE_TEST_CAMPAIGN_ID", "1554023") or 1554023)
 MAILSHAKE_MONITOR_INTERVAL_SECONDS = int(os.environ.get("MAILSHAKE_MONITOR_INTERVAL_SECONDS", "900"))
@@ -451,7 +452,7 @@ def persist_unsubscribe(email: str):
     _persist_zoho_suppression(email, "unsubscribe")
     # Best-effort compatibility sync while Mailshake still exists. This is not
     # a runtime dependency and may be removed/canceled without affecting safety.
-    if MAILSHAKE_API_KEY:
+    if MAILSHAKE_RUNTIME_ENABLED and MAILSHAKE_API_KEY:
         try:
             mailshake_api(
                 "POST",
@@ -2161,11 +2162,11 @@ def startup():
         f"SRE_BRIDGE startup apiKeyConfigured={bool(REPLY_API_KEY)} replySyncEnabled={REPLY_SYNC_ENABLED} mailshakeApiKeyConfigured={bool(MAILSHAKE_API_KEY)} mailshakeCampaignId={MAILSHAKE_CAMPAIGN_ID} complianceHold={MAILSHAKE_COMPLIANCE_HOLD} sequenceId={SEQUENCE_ID} configPath={CONFIG_PATH} prospectCount={startup_count}",
         flush=True,
     )
-    if MAILSHAKE_API_KEY:
+    if MAILSHAKE_RUNTIME_ENABLED and MAILSHAKE_API_KEY:
         threading.Thread(target=test_mailshake_connection, daemon=True).start()
         if MAILSHAKE_COMPLIANCE_TEST_CAMPAIGN_ID > 0:
             threading.Thread(target=log_compliance_test_status_once, daemon=True).start()
-    if MAILSHAKE_API_KEY and MAILSHAKE_CAMPAIGN_ID > 0:
+    if MAILSHAKE_RUNTIME_ENABLED and MAILSHAKE_API_KEY and MAILSHAKE_CAMPAIGN_ID > 0:
         threading.Thread(target=mailshake_monitor_runner, daemon=True).start()
         if MAILSHAKE_PUSH_SETUP_ON_STARTUP and MAILSHAKE_PUSH_SECRET:
             threading.Thread(target=setup_mailshake_pushes_once, daemon=True).start()
@@ -2206,6 +2207,7 @@ def health():
         "fnDirectDkimConfigured": bool(FN_OUTREACH_DKIM_PRIVATE_KEY_B64),
         "fnDirectOutreachEnabled": FN_DIRECT_OUTREACH_ENABLED,
         "mailshakeRequiredForDirectOutreach": False,
+        "mailshakeRuntimeEnabled": MAILSHAKE_RUNTIME_ENABLED,
         "directSuppressionStore": "ZOHO_IMAP",
         "directSendLedger": "ZOHO_SENT_MAIL",
     }
