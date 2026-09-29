@@ -1062,6 +1062,16 @@ def _direct_scan_once(send_if_due=False):
                             break
                         subject = str(step.get("subject") or "").strip()
                         body = _render_direct_body(step.get("body") or "", recipient)
+                        html_body = _render_direct_body(step.get("html_body") or "", recipient)
+                        profile_url = str(recipient.get("profileUrl") or "").strip()
+                        if "{{" in body or "{{" in html_body:
+                            global_hold = global_hold or f"RENDER_PLACEHOLDER_ERROR:{email_addr}"
+                            alerts.append({"priority":"HIGH","triggerType":"MESSAGE_RENDER_ERROR","email":email_addr})
+                            break
+                        if profile_url not in body or profile_url not in html_body:
+                            global_hold = global_hold or f"PROFILE_LINK_RENDER_ERROR:{email_addr}"
+                            alerts.append({"priority":"HIGH","triggerType":"PROFILE_LINK_RENDER_ERROR","email":email_addr})
+                            break
                         try:
                             _profile_url_preflight(recipient)
                         except Exception as exc:
@@ -1074,6 +1084,7 @@ def _direct_scan_once(send_if_due=False):
                             email_addr,
                             subject,
                             body,
+                            html_body=html_body,
                             bcc_email=str(sequence.get("owner_bcc") or ""),
                             outreach_key=key,
                         )
