@@ -14,12 +14,11 @@ Franklin Navigator outreach must be built and operated to preserve long-term sen
 
 1. **Truthful identity and content.** From/Reply-To/routing identity and subject lines must be accurate and non-deceptive. Use a stable Franklin Navigator sender identity. No invented person identity may be used to create false trust.
 2. **Commercial-email compliance footer.** Every commercial outreach message must include Franklin Navigator's valid physical postal address, a clear statement that the message is commercial/community outreach, and an easy opt-out path.
-3. **Unsubscribe protection.** Reply-based opt-outs remain enabled. A visible unsubscribe link must be present in promotional outreach and must function correctly. Opt-outs are durable suppressions across remaps, imports, campaigns, and provider migrations. For the explicitly owner-approved Franklin Navigator first-10 pilot (campaign 1553662, maximum 10/day), RFC 8058 headers are not a release gate so long as the verified low-volume safeguards remain in force: working visible unsubscribe, durable suppression, SPF/DKIM/DMARC pass, valid physical postal address, open/click tracking off, first-touch only, conservative pacing, and fail-closed monitoring. RFC 8058 one-click header compliance becomes mandatory before any material scale-up approaching mailbox-provider bulk-sender thresholds, and must be reverified after any provider/mailbox/SMTP/delivery-architecture change.
-4. **Authentication gate.** Before material scale, the sending domain/mailbox must pass SPF, DKIM, DMARC, TLS, and alignment checks appropriate to the provider. Mailshake's green domain-health indicator is not by itself sufficient evidence because its automatic check only verifies presence for some records.
+3. **Unsubscribe protection.** Reply-based opt-outs remain enabled. Every current Franklin Navigator promotional outreach message must include a working visible unsubscribe link plus RFC 8058 one-click headers: `List-Unsubscribe` with an HTTPS endpoint and `List-Unsubscribe-Post: List-Unsubscribe=One-Click`. The Franklin-controlled `fnmail1` DKIM signature must cover both headers. Opt-outs are written durably to the Zoho IMAP suppression store and must remain effective across campaigns, rebuilds, and provider changes. The direct-Zoho path passed real Gmail header verification and a real HTTPS one-click POST test on 2026-09-29. Reverify after any material provider, mailbox, SMTP, DKIM, domain, unsubscribe-endpoint, or delivery-architecture change.\n4. **Authentication gate.** Before material scale, the sending domain/mailbox must pass SPF, DKIM, DMARC, TLS, and alignment checks appropriate to the provider. Mailshake's green domain-health indicator is not by itself sufficient evidence because its automatic check only verifies presence for some records.
 5. **Complaint-rate rule.** Target Gmail user-reported spam rate is below 0.10%. Never knowingly continue at or above 0.30%. Any observable spam complaint in a low-volume pilot causes a fail-closed review before more outreach.
 6. **Pilot bounce/unsubscribe rule.** During the first 20 real outreach sends from a mailbox, any hard bounce or unsubscribe pauses further automated outreach for review. At larger volume, a 2% bounce rate is an internal warning threshold and 5% is a hard pause/step-back threshold.
-7. **Slow ramp / no spikes.** Do not jump sending volume. Default Mailshake ramp ceiling per mailbox: Week 1 <=20/day; Week 2 <=40/day; Week 3 <=55/day; Week 4 <=75/day; Week 5 <=100/day. Default long-term ceiling is 100/day per mailbox unless fresh evidence and explicit owner approval justify otherwise.
-8. **Current pilot remains stricter.** First Franklin Navigator pilot remains <=10/day, one at a time, spaced across Monday-Friday business hours, first-touch only.
+7. **Slow ramp / no spikes.** Do not jump sending volume. Default outreach ramp ceiling per mailbox: Week 1 <=20/day; Week 2 <=40/day; Week 3 <=55/day; Week 4 <=75/day; Week 5 <=100/day. Default long-term ceiling is 100/day per mailbox unless fresh evidence and explicit owner approval justify otherwise.
+8. **Current pilot remains stricter.** First Franklin Navigator pilot remains <=10 sends/day, one at a time, at least 12 minutes apart, Monday-Friday 09:00-16:00 America/Chicago. It uses one initial message plus exactly two owner-approved follow-ups; no third follow-up is enabled.
 9. **No automatic scale-up.** Automation may monitor and pause automatically, but may not silently raise daily caps, add large cohorts, add follow-ups, or activate new sending mailboxes/domains. Scale requires a clean prior cohort and explicit owner authorization.
 10. **Recipient-quality rule.** Use relevant, source-backed, profile-bound Franklin recipients. Do not use purchased, guessed, dictionary-generated, scraped-in-violation-of-site-terms, stale, or unverified bulk lists. Exact profile binding and currentness are required.
 11. **Suppression durability.** Bounces, opt-outs, spam complaints, invalid addresses, and explicit "do not contact" signals must remain suppressed across future campaigns and provider migrations. Never re-add them through a fresh import.
@@ -49,23 +48,38 @@ Franklin Navigator outreach must be built and operated to preserve long-term sen
 
 ## Current first-10 enforcement
 
-- Campaign ID: 1553662
+- Sending path: Franklin SRE direct Zoho SMTP
+- Direct campaign ID: FN-FIRST10-2026-09
+- Legacy Mailshake campaign 1553662: retired from sending/runtime and remains paused
 - Max intended prospects: 10
-- First-touch messages only: 1
+- Sequence: initial + exactly 2 owner-approved follow-ups
+- Follow-up 1: +5 business days
+- Follow-up 2: +7 additional business days; final note
 - Max daily sends: 10
-- One email per time slot
+- Minimum spacing: 12 minutes
+- Sending hours: Monday-Friday 09:00-16:00 America/Chicago
 - Open tracking: off
 - Click tracking: off
 - Exact recipient/profile binding required
-- Any roster mismatch: pause
-- Completion at 10 sends: lock closed
-- Any bounce or unsubscribe during first 10: pause for review
-- Old Reply.io sync: disabled
-- BCC audit copy: reachrgnow@gmail.com
+- Any reply: stop that recipient
+- Any hard bounce, spam complaint, or organization-wide DNC: fail-closed hold/review
+- Any unsubscribe: durable Zoho IMAP suppression
+- Organization/domain holds and suppressions outrank sending
+- SPF: pass
+- Zoho DKIM: pass
+- Franklin fnmail1 DKIM: pass
+- DMARC: pass
+- TLS: pass
+- RFC 8058 one-click headers: pass
+- Franklin fnmail1 DKIM covers List-Unsubscribe and List-Unsubscribe-Post
+- Feedback-ID: enabled
+- Visible body unsubscribe: enabled
+- Physical postal address: present
+- Owner BCC audit copy: reachrgnow@gmail.com
+- Mailshake runtime dependency: none
 
 This document is the durable authority for Franklin Navigator outbound deliverability.
-21. **RFC 8058 scale gate.** Do not infer RFC 8058 compliance from provider marketing, UI labels, or a body unsubscribe link. The owner-approved first-10 low-volume pilot may proceed without RFC 8058 headers under the conditions in Rule 3. Before any material scale-up approaching mailbox-provider bulk-sender thresholds, verify an actual received message's raw headers. Required proof: `List-Unsubscribe` contains an HTTPS unsubscribe URL and `List-Unsubscribe-Post` equals `List-Unsubscribe=One-Click`. Re-verify after any material provider, mailbox, SMTP, domain, or campaign-delivery architecture change.
-
+21. **RFC 8058 proof gate.** RFC 8058 is now required for all current Franklin Navigator promotional outreach, not merely future scale. The direct-Zoho path passed actual Gmail raw-header verification on 2026-09-29: clean HTTPS `List-Unsubscribe`, `List-Unsubscribe-Post: List-Unsubscribe=One-Click`, Franklin `fnmail1` DKIM coverage of both headers, and successful HTTPS one-click POST. Re-verify after any material sending-architecture change.
 
 ## Owner-approved follow-up sequence — 2026-09-29
 
