@@ -103,3 +103,31 @@ Release conditions retained:
 RFC 8058 remains a mandatory scale gate before any material expansion approaching mailbox-provider bulk-sender thresholds and after any material provider/mailbox/SMTP/delivery-architecture change.
 
 This approval does not authorize follow-ups, volume increases, new mailboxes, or provider changes.
+
+
+## Qualified RFC 8058 direct-Zoho path — 2026-09-29
+
+A production-path owner-controlled test was sent through the Franklin SRE bridge using the existing Zoho mailbox `community@franklinnavigator.com`.
+
+Received Gmail raw-message verification:
+- SPF: PASS
+- DKIM: PASS
+- DMARC: PASS
+- TLS delivery: PASS
+- `List-Unsubscribe`: PRESENT with HTTPS Franklin unsubscribe endpoint
+- `List-Unsubscribe-Post`: `List-Unsubscribe=One-Click` PRESENT
+- visible unsubscribe URL: PRESENT
+- physical postal address: PRESENT
+- open/click tracking: not added by the SRE direct sender
+
+One-click endpoint verification:
+- real HTTPS POST using `List-Unsubscribe=One-Click`: HTTP 200
+- durable Mailshake unsubscribe-list handoff: executed
+- main campaign safety pause: retained
+- self-test was immediately disabled after verification to prevent repeat test actions
+
+Disposition:
+- The direct Zoho SMTP path through the Franklin SRE bridge is QUALIFIED for RFC 8058 one-click unsubscribe.
+- Mailshake campaign 1553662 remains paused and must not be unpaused for sending because Mailshake itself does not emit the required RFC 8058 headers on the tested SMTP-connected path.
+- Any real first-10 sending moved to the qualified direct path must preserve the same exact roster, first-touch-only copy, owner BCC, business-hours pacing, suppression rules, organization/domain safety rules, and fail-closed monitoring.
+- No scale-up is authorized by this qualification.
