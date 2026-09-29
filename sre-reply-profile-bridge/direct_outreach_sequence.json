@@ -12,8 +12,8 @@
       "TH",
       "FR"
     ],
-    "start": "00:00",
-    "end": "23:59",
+    "start": "09:00",
+    "end": "16:00",
     "minimum_minutes_between_sends": 12,
     "max_daily_initial_sends": 10
   },
@@ -53,6 +53,6 @@
     "Exactly two follow-ups are enabled for the pilot; the prior third follow-up draft is intentionally not enabled to reduce complaint risk.",
     "Follow-ups are never sent after a reply, unsubscribe, bounce, complaint, correction/removal request, organization/domain suppression, or other stop signal.",
     "Mailshake campaign 1553662 remains paused and is not the sending engine.",
-    "Owner explicitly authorized the first-10 initial emails to begin immediately outside the normal business-hours window on 2026-09-29; 12-minute spacing remains enforced."
+    "Owner explicitly authorized only the first-10 initial emails to begin outside the normal business-hours window on 2026-09-29. The 12-minute spacing remains enforced. Follow-ups remain limited to the normal Mon-Fri 09:00-16:00 America/Chicago window."
   ]
 }
