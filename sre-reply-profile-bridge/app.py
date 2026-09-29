@@ -37,6 +37,7 @@ FN_OUTREACH_SMTP_PASSWORD = os.environ.get("FN_OUTREACH_SMTP_PASSWORD", "").stri
 FN_OUTREACH_PUBLIC_BASE_URL = os.environ.get("FN_OUTREACH_PUBLIC_BASE_URL", MAILSHAKE_PUBLIC_BASE_URL).rstrip("/")
 FN_OUTREACH_OWNER_TEST_EMAIL = os.environ.get("FN_OUTREACH_OWNER_TEST_EMAIL", "reachrgnow@gmail.com").strip()
 FN_OUTREACH_OWNER_TEST_ON_STARTUP = os.environ.get("FN_OUTREACH_OWNER_TEST_ON_STARTUP", "false").strip().lower() in {"1", "true", "yes"}
+FN_ONE_CLICK_SELF_TEST_ON_STARTUP = os.environ.get("FN_ONE_CLICK_SELF_TEST_ON_STARTUP", "false").strip().lower() in {"1", "true", "yes"}
 FN_OUTREACH_LIST_ID = "franklin-navigator-community-outreach.franklinnavigator.com"
 FN_UNSUBSCRIBE_SIGNING_SECRET = os.environ.get("FN_UNSUBSCRIBE_SIGNING_SECRET", "").strip()
 RFC8058_SCALE_PROOF = os.environ.get("RFC8058_SCALE_PROOF", "false").strip().lower() in {"1", "true", "yes"}
@@ -398,6 +399,29 @@ def send_owner_rfc8058_test_once():
         )
     except Exception as exc:
         print(f"SRE_BRIDGE RFC8058_OWNER_TEST ERROR {exc}", flush=True)
+
+def run_one_click_self_test_once():
+    try:
+        time.sleep(3)
+        token = make_unsubscribe_token(FN_OUTREACH_OWNER_TEST_EMAIL)
+        url = f"{FN_OUTREACH_PUBLIC_BASE_URL}/unsubscribe/one-click/{token}"
+        response = requests.post(
+            url,
+            data="List-Unsubscribe=One-Click",
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            timeout=30,
+        )
+        if response.status_code != 200:
+            raise RuntimeError(f"HTTP_{response.status_code}:{response.text[:200]}")
+        print(
+            "SRE_BRIDGE ONE_CLICK_SELF_TEST PASS "
+            + json.dumps({"status": response.status_code, "at": now_iso()}, sort_keys=True),
+            flush=True,
+        )
+    except Exception as exc:
+        print(f"SRE_BRIDGE ONE_CLICK_SELF_TEST FAIL {exc}", flush=True)
+
+
 
 
 @app.post("/unsubscribe/one-click/{token}", response_class=PlainTextResponse)
@@ -1543,6 +1567,8 @@ def startup():
         threading.Thread(target=send_owner_test_once, daemon=True).start()
     if FN_OUTREACH_OWNER_TEST_ON_STARTUP:
         threading.Thread(target=send_owner_rfc8058_test_once, daemon=True).start()
+    if FN_ONE_CLICK_SELF_TEST_ON_STARTUP:
+        threading.Thread(target=run_one_click_self_test_once, daemon=True).start()
 
 
 @app.get("/health")
