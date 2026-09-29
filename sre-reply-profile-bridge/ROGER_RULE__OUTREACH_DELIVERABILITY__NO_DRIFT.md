@@ -65,3 +65,12 @@ Franklin Navigator outreach must be built and operated to preserve long-term sen
 
 This document is the durable authority for Franklin Navigator outbound deliverability.
 21. **RFC 8058 scale gate.** Do not infer RFC 8058 compliance from provider marketing, UI labels, or a body unsubscribe link. The owner-approved first-10 low-volume pilot may proceed without RFC 8058 headers under the conditions in Rule 3. Before any material scale-up approaching mailbox-provider bulk-sender thresholds, verify an actual received message's raw headers. Required proof: `List-Unsubscribe` contains an HTTPS unsubscribe URL and `List-Unsubscribe-Post` equals `List-Unsubscribe=One-Click`. Re-verify after any material provider, mailbox, SMTP, domain, or campaign-delivery architecture change.
+
+
+## Owner-approved follow-up sequence — 2026-09-29
+
+For the Franklin Navigator first-10 pilot, the owner explicitly authorized follow-up emails after the initial message. The qualified direct-Zoho path may use exactly two follow-ups:
+- Follow-up 1: wait 5 business days after the previous message.
+- Follow-up 2: wait 7 additional business days after the previous message and identify it as the final outreach note.
+
+No third follow-up is enabled for this pilot. Follow-ups must stop for that recipient after any reply, unsubscribe, bounce, spam complaint, factual-correction request, removal request, organization/domain hold or suppression, or other clear do-not-contact signal. A bounce or spam complaint during the low-volume pilot remains a global fail-closed review trigger. Open/click tracking remains off. The paused Mailshake campaign is not authorized to send these follow-ups; they belong to the qualified direct-Zoho path so RFC 8058 protections remain intact.
