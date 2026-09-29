@@ -4,12 +4,19 @@ import hashlib
 import base64
 import smtplib
 import ssl
+import dkim
+import imaplib
+import csv
+import io
 import os
 import re
 import threading
 import time
 from datetime import datetime, timezone
 from email.message import EmailMessage
+from email import policy as email_policy
+from email.parser import BytesParser
+from zoneinfo import ZoneInfo
 from email.utils import formatdate, make_msgid
 from urllib.parse import parse_qs, urlparse
 
@@ -40,6 +47,14 @@ FN_OUTREACH_OWNER_TEST_ON_STARTUP = os.environ.get("FN_OUTREACH_OWNER_TEST_ON_ST
 FN_ONE_CLICK_SELF_TEST_ON_STARTUP = os.environ.get("FN_ONE_CLICK_SELF_TEST_ON_STARTUP", "false").strip().lower() in {"1", "true", "yes"}
 FN_OUTREACH_LIST_ID = "franklin-navigator-community-outreach.franklinnavigator.com"
 FN_UNSUBSCRIBE_SIGNING_SECRET = os.environ.get("FN_UNSUBSCRIBE_SIGNING_SECRET", "").strip()
+FN_OUTREACH_DKIM_PRIVATE_KEY_B64 = os.environ.get("FN_OUTREACH_DKIM_PRIVATE_KEY_B64", "").strip()
+FN_OUTREACH_DKIM_SELECTOR = os.environ.get("FN_OUTREACH_DKIM_SELECTOR", "fnmail1").strip()
+FN_OUTREACH_DKIM_DOMAIN = os.environ.get("FN_OUTREACH_DKIM_DOMAIN", "franklinnavigator.com").strip()
+FN_FEEDBACK_SENDER_ID = os.environ.get("FN_FEEDBACK_SENDER_ID", "FRNAVGTR").strip()
+FN_OUTREACH_IMAP_HOST = os.environ.get("FN_OUTREACH_IMAP_HOST", "imap.zoho.com").strip()
+FN_OUTREACH_IMAP_PORT = int(os.environ.get("FN_OUTREACH_IMAP_PORT", "993") or 993)
+FN_DIRECT_OUTREACH_ENABLED = os.environ.get("FN_DIRECT_OUTREACH_ENABLED", "false").strip().lower() in {"1", "true", "yes"}
+FN_DIRECT_SEQUENCE_PATH = os.environ.get("FN_DIRECT_SEQUENCE_PATH", os.path.join(os.path.dirname(__file__), "direct_outreach_sequence.json")).strip()
 RFC8058_SCALE_PROOF = os.environ.get("RFC8058_SCALE_PROOF", "false").strip().lower() in {"1", "true", "yes"}
 DELIVERABILITY_POLICY_PATH = os.path.join(os.path.dirname(__file__), "roger_deliverability_policy.json")
 ORG_SAFETY_POLICY_PATH = os.path.join(os.path.dirname(__file__), "org_domain_safety_policy.json")
@@ -340,6 +355,7 @@ def build_franklin_message(to_email: str, subject: str, plain_body: str, html_bo
     msg["List-ID"] = f"<{FN_OUTREACH_LIST_ID}>"
     msg["List-Unsubscribe"] = f"<{one_click_url}>"
     msg["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click"
+    msg["Feedback-ID"] = f"first10:profile:outreach:{FN_FEEDBACK_SENDER_ID}"
     footer_text = (
         "\n\nThis is a Franklin Navigator community outreach email.\n\n"
         "Franklin Navigator Community Team\n"
@@ -366,10 +382,38 @@ def build_franklin_message(to_email: str, subject: str, plain_body: str, html_bo
     return msg
 
 
-def send_franklin_smtp_message(to_email: str, subject: str, plain_body: str, html_body: str = "", bcc_email: str = ""):
+def _direct_dkim_private_key():
+    if not FN_OUTREACH_DKIM_PRIVATE_KEY_B64:
+        raise RuntimeError("FN_OUTREACH_DKIM_PRIVATE_KEY_B64 is not configured")
+    try:
+        return base64.b64decode(FN_OUTREACH_DKIM_PRIVATE_KEY_B64)
+    except Exception as exc:
+        raise RuntimeError("FN_OUTREACH_DKIM_PRIVATE_KEY_B64 is invalid") from exc
+
+
+def send_franklin_smtp_message(to_email: str, subject: str, plain_body: str, html_body: str = "", bcc_email: str = "", outreach_key: str = ""):
     if not FN_OUTREACH_SMTP_PASSWORD:
         raise RuntimeError("FN_OUTREACH_SMTP_PASSWORD is not configured")
     msg = build_franklin_message(to_email, subject, plain_body, html_body)
+    if outreach_key:
+        msg["X-Franklin-Outreach-Key"] = outreach_key
+        msg["X-Franklin-Campaign"] = "FN-FIRST10-2026-09"
+    raw = msg.as_bytes(policy=email_policy.SMTP)
+    include_headers = [
+        b"from", b"to", b"reply-to", b"subject", b"date", b"message-id",
+        b"list-id", b"list-unsubscribe", b"list-unsubscribe-post", b"feedback-id"
+    ]
+    if outreach_key:
+        include_headers.extend([b"x-franklin-outreach-key", b"x-franklin-campaign"])
+    signature = dkim.sign(
+        raw,
+        selector=FN_OUTREACH_DKIM_SELECTOR.encode("ascii"),
+        domain=FN_OUTREACH_DKIM_DOMAIN.encode("ascii"),
+        privkey=_direct_dkim_private_key(),
+        include_headers=include_headers,
+        canonicalize=(b"relaxed", b"relaxed"),
+    )
+    signed = signature + raw
     recipients = [to_email]
     if bcc_email and bcc_email.lower() != to_email.lower():
         recipients.append(bcc_email)
@@ -381,7 +425,7 @@ def send_franklin_smtp_message(to_email: str, subject: str, plain_body: str, htm
         timeout=30,
     ) as smtp:
         smtp.login(FN_OUTREACH_SMTP_USER, FN_OUTREACH_SMTP_PASSWORD)
-        smtp.send_message(msg, to_addrs=recipients)
+        smtp.sendmail(FN_OUTREACH_SMTP_USER, recipients, signed)
     return msg["Message-ID"]
 
 
@@ -1586,6 +1630,8 @@ def health():
         "rfc8058ScaleProof": RFC8058_SCALE_PROOF,
         "fnSmtpConfigured": bool(FN_OUTREACH_SMTP_PASSWORD),
         "fnUnsubscribeSigningConfigured": bool(FN_UNSUBSCRIBE_SIGNING_SECRET),
+        "fnDirectDkimConfigured": bool(FN_OUTREACH_DKIM_PRIVATE_KEY_B64),
+        "fnDirectOutreachEnabled": FN_DIRECT_OUTREACH_ENABLED,
     }
 
 
