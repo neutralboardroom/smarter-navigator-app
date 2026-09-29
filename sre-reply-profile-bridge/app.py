@@ -53,6 +53,8 @@ FN_OUTREACH_DKIM_DOMAIN = os.environ.get("FN_OUTREACH_DKIM_DOMAIN", "franklinnav
 FN_FEEDBACK_SENDER_ID = os.environ.get("FN_FEEDBACK_SENDER_ID", "FRNAVGTR").strip()
 FN_OUTREACH_IMAP_HOST = os.environ.get("FN_OUTREACH_IMAP_HOST", "imap.zoho.com").strip()
 FN_OUTREACH_IMAP_PORT = int(os.environ.get("FN_OUTREACH_IMAP_PORT", "993") or 993)
+FN_SUPPRESSION_MAILBOX = os.environ.get("FN_SUPPRESSION_MAILBOX", "Franklin Navigator Suppressions").strip()
+FN_SUPPRESSION_SEED_ON_STARTUP = os.environ.get("FN_SUPPRESSION_SEED_ON_STARTUP", "false").strip().lower() in {"1", "true", "yes"}
 FN_DIRECT_OUTREACH_ENABLED = os.environ.get("FN_DIRECT_OUTREACH_ENABLED", "false").strip().lower() in {"1", "true", "yes"}
 FN_DIRECT_SEQUENCE_PATH = os.environ.get("FN_DIRECT_SEQUENCE_PATH", os.path.join(os.path.dirname(__file__), "direct_outreach_sequence.json")).strip()
 RFC8058_SCALE_PROOF = os.environ.get("RFC8058_SCALE_PROOF", "false").strip().lower() in {"1", "true", "yes"}
@@ -297,38 +299,35 @@ def _urlsafe_b64decode(value: str) -> bytes:
 def make_unsubscribe_token(email: str) -> str:
     if not FN_UNSUBSCRIBE_SIGNING_SECRET:
         raise RuntimeError("FN_UNSUBSCRIBE_SIGNING_SECRET is not configured")
-    payload = json.dumps(
-        {"e": str(email or "").strip().lower(), "l": FN_OUTREACH_LIST_ID, "v": 1},
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8")
-    encoded = _urlsafe_b64encode(payload)
+    email_value = str(email or "").strip().lower()
+    if "@" not in email_value:
+        raise RuntimeError("invalid unsubscribe email")
+    encoded = _urlsafe_b64encode(email_value.encode("utf-8"))
     signature = hmac.new(
         FN_UNSUBSCRIBE_SIGNING_SECRET.encode("utf-8"),
-        encoded.encode("ascii"),
+        ("v2:" + encoded).encode("ascii"),
         hashlib.sha256,
-    ).digest()
-    return encoded + "." + _urlsafe_b64encode(signature)
+    ).digest()[:16]
+    return "v2." + encoded + "." + _urlsafe_b64encode(signature)
 
 
 def parse_unsubscribe_token(token: str) -> str:
     try:
         if not FN_UNSUBSCRIBE_SIGNING_SECRET:
             raise ValueError("signing secret missing")
-        encoded, supplied_sig = token.split(".", 1)
+        version, encoded, supplied_sig = token.split(".", 2)
+        if version != "v2":
+            raise ValueError("unsupported token version")
         expected_sig = _urlsafe_b64encode(
             hmac.new(
                 FN_UNSUBSCRIBE_SIGNING_SECRET.encode("utf-8"),
-                encoded.encode("ascii"),
+                ("v2:" + encoded).encode("ascii"),
                 hashlib.sha256,
-            ).digest()
+            ).digest()[:16]
         )
         if not hmac.compare_digest(supplied_sig, expected_sig):
             raise ValueError("signature mismatch")
-        payload = json.loads(_urlsafe_b64decode(encoded).decode("utf-8"))
-        if payload.get("l") != FN_OUTREACH_LIST_ID or int(payload.get("v") or 0) != 1:
-            raise ValueError("list mismatch")
-        email = str(payload.get("e") or "").strip().lower()
+        email = _urlsafe_b64decode(encoded).decode("utf-8").strip().lower()
         if "@" not in email:
             raise ValueError("invalid email")
         return email
@@ -336,24 +335,84 @@ def parse_unsubscribe_token(token: str) -> str:
         raise HTTPException(status_code=400, detail="Invalid unsubscribe token") from exc
 
 
-def persist_unsubscribe(email: str):
-    mailshake_api(
-        "POST",
-        "/recipients/unsubscribe",
-        data={"emailAddresses": email},
-    )
-    try:
-        mailshake_api(
-            "POST",
-            "/campaigns/pause",
-            data={"campaignID": MAILSHAKE_CAMPAIGN_ID},
+def _ensure_suppression_mailbox(client):
+    status, _ = client.select(f'"{FN_SUPPRESSION_MAILBOX}"', readonly=True)
+    if status == "OK":
+        return
+    client.create(f'"{FN_SUPPRESSION_MAILBOX}"')
+    status2, _ = client.select(f'"{FN_SUPPRESSION_MAILBOX}"', readonly=True)
+    if status2 != "OK":
+        raise RuntimeError("Unable to create suppression mailbox")
+
+
+def _persist_zoho_suppression(email: str, reason: str):
+    email_value = str(email or "").strip().lower()
+    if "@" not in email_value:
+        raise RuntimeError("invalid suppression email")
+    with _imap_connect() as client:
+        _ensure_suppression_mailbox(client)
+        marker = EmailMessage(policy=email_policy.SMTP)
+        marker["From"] = FN_OUTREACH_SMTP_USER
+        marker["To"] = FN_OUTREACH_SMTP_USER
+        marker["Subject"] = f"Franklin Navigator suppression: {email_value}"
+        marker["Date"] = formatdate(localtime=True)
+        marker["Message-ID"] = make_msgid(domain="franklinnavigator.com")
+        marker["X-Franklin-Suppression-Email"] = email_value
+        marker["X-Franklin-Suppression-Reason"] = str(reason or "unspecified")[:120]
+        marker.set_content("Durable Franklin Navigator outreach suppression marker.")
+        client.append(
+            f'"{FN_SUPPRESSION_MAILBOX}"',
+            "\\Seen",
+            imaplib.Time2Internaldate(time.time()),
+            marker.as_bytes(policy=email_policy.SMTP),
         )
-    except Exception as exc:
-        print(f"SRE_BRIDGE UNSUBSCRIBE_PAUSE ERROR {exc}", flush=True)
+
+
+def _zoho_suppression_set():
+    emails = set()
+    with _imap_connect() as client:
+        _ensure_suppression_mailbox(client)
+        status, data = client.search(None, "ALL")
+        if status != "OK":
+            raise RuntimeError("suppression mailbox search failed")
+        ids = [x for x in (data[0] or b"").split() if x]
+        for msg_id in ids[-5000:]:
+            status2, msg_data = client.fetch(
+                msg_id,
+                '(BODY.PEEK[HEADER.FIELDS (X-FRANKLIN-SUPPRESSION-EMAIL)])',
+            )
+            if status2 != "OK":
+                continue
+            raw = b"".join(
+                part[1] for part in msg_data
+                if isinstance(part, tuple) and isinstance(part[1], (bytes, bytearray))
+            )
+            if not raw:
+                continue
+            msg = BytesParser(policy=email_policy.default).parsebytes(raw)
+            value = str(msg.get("X-Franklin-Suppression-Email") or "").strip().lower()
+            if "@" in value:
+                emails.add(value)
+    return emails
+
+
+def persist_unsubscribe(email: str):
+    _persist_zoho_suppression(email, "unsubscribe")
+    # Best-effort compatibility sync while Mailshake still exists. This is not
+    # a runtime dependency and may be removed/canceled without affecting safety.
+    if MAILSHAKE_API_KEY:
+        try:
+            mailshake_api(
+                "POST",
+                "/recipients/unsubscribe",
+                data={"emailAddresses": email},
+            )
+        except Exception as exc:
+            print(f"SRE_BRIDGE MAILSHAKE_UNSUB_SYNC_SKIPPED {exc}", flush=True)
     print(
         "SRE_BRIDGE ONE_CLICK_UNSUBSCRIBE "
         + json.dumps(
-            {"email": email, "campaignId": MAILSHAKE_CAMPAIGN_ID, "at": now_iso()},
+            {"email": email, "store": "ZOHO_IMAP", "at": now_iso()},
             sort_keys=True,
         ),
         flush=True,
@@ -364,7 +423,7 @@ def build_franklin_message(to_email: str, subject: str, plain_body: str, html_bo
     token = make_unsubscribe_token(to_email)
     one_click_url = f"{FN_OUTREACH_PUBLIC_BASE_URL}/unsubscribe/one-click/{token}"
     visible_url = f"{FN_OUTREACH_PUBLIC_BASE_URL}/unsubscribe/{token}"
-    msg = EmailMessage()
+    msg = EmailMessage(policy=email_policy.SMTP.clone(max_line_length=998))
     msg["From"] = f"Franklin Navigator Community Team <{FN_OUTREACH_SMTP_USER}>"
     msg["To"] = to_email
     msg["Reply-To"] = FN_OUTREACH_SMTP_USER
@@ -660,7 +719,7 @@ def _direct_scan_once(send_if_due=False):
     with _imap_connect() as client:
         sent_mailbox, records = _imap_search_sent_records(client)
         record_map = _direct_record_map(records)
-        unsubscribed = _mailshake_unsubscribe_set()
+        unsubscribed = _zoho_suppression_set()
         suppressed = []
         bounce_holds = []
         complaint_holds = []
@@ -719,7 +778,7 @@ def _direct_scan_once(send_if_due=False):
                         if problem == "bounce":
                             bounce_holds.append(email_addr)
                             try:
-                                mailshake_api("POST", "/recipients/unsubscribe", data={"emailAddresses": email_addr})
+                                _persist_zoho_suppression(email_addr, "bounce")
                             except Exception:
                                 pass
                             global_hold = global_hold or f"PILOT_BOUNCE:{email_addr}"
@@ -728,7 +787,7 @@ def _direct_scan_once(send_if_due=False):
                         if problem == "complaint":
                             complaint_holds.append(email_addr)
                             try:
-                                mailshake_api("POST", "/recipients/unsubscribe", data={"emailAddresses": email_addr})
+                                _persist_zoho_suppression(email_addr, "complaint")
                             except Exception:
                                 pass
                             global_hold = global_hold or f"PILOT_COMPLAINT:{email_addr}"
@@ -789,6 +848,14 @@ def _direct_scan_once(send_if_due=False):
         with _state_lock:
             _state["directOutreach"].update(summary)
         return summary
+
+
+def seed_suppression_store_once():
+    try:
+        _persist_zoho_suppression(FN_OUTREACH_OWNER_TEST_EMAIL, "owner_controlled_compliance_test_unsubscribe_migration")
+        print("SRE_BRIDGE SUPPRESSION_SEED PASS", flush=True)
+    except Exception as exc:
+        print(f"SRE_BRIDGE SUPPRESSION_SEED FAIL {exc}", flush=True)
 
 
 def direct_outreach_runner():
@@ -1992,6 +2059,8 @@ def startup():
     if FN_ONE_CLICK_SELF_TEST_ON_STARTUP:
         threading.Thread(target=run_one_click_self_test_once, daemon=True).start()
     threading.Thread(target=direct_outreach_runner, daemon=True).start()
+    if FN_SUPPRESSION_SEED_ON_STARTUP:
+        threading.Thread(target=seed_suppression_store_once, daemon=True).start()
 
 
 @app.get("/health")
