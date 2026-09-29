@@ -57,6 +57,7 @@ FN_OUTREACH_IMAP_PORT = int(os.environ.get("FN_OUTREACH_IMAP_PORT", "993") or 99
 FN_SUPPRESSION_MAILBOX = os.environ.get("FN_SUPPRESSION_MAILBOX", "Franklin Navigator Suppressions").strip()
 FN_SUPPRESSION_SEED_ON_STARTUP = os.environ.get("FN_SUPPRESSION_SEED_ON_STARTUP", "false").strip().lower() in {"1", "true", "yes"}
 FN_DIRECT_OUTREACH_ENABLED = os.environ.get("FN_DIRECT_OUTREACH_ENABLED", "false").strip().lower() in {"1", "true", "yes"}
+FN_INITIAL_SEND_OVERRIDE = os.environ.get("FN_INITIAL_SEND_OVERRIDE", "false").strip().lower() in {"1", "true", "yes"}
 FN_DIRECT_SEQUENCE_PATH = os.environ.get("FN_DIRECT_SEQUENCE_PATH", os.path.join(os.path.dirname(__file__), "direct_outreach_sequence.json")).strip()
 RFC8058_SCALE_PROOF = os.environ.get("RFC8058_SCALE_PROOF", "false").strip().lower() in {"1", "true", "yes"}
 DELIVERABILITY_POLICY_PATH = os.path.join(os.path.dirname(__file__), "roger_deliverability_policy.json")
@@ -904,7 +905,8 @@ def _direct_scan_once(send_if_due=False):
 
                 if eligible:
                     next_eligible.append({"email": email_addr, "step": step_id})
-                    if send_if_due and not global_hold and _within_direct_send_window(now_local, sequence):
+                    initial_override = FN_INITIAL_SEND_OVERRIDE and step_id == "initial"
+                    if send_if_due and not global_hold and (_within_direct_send_window(now_local, sequence) or initial_override):
                         min_gap = int((sequence.get("send_window") or {}).get("minimum_minutes_between_sends") or 12)
                         if last_send_dt and (datetime.now(timezone.utc) - last_send_dt.astimezone(timezone.utc)).total_seconds() < min_gap * 60:
                             break
@@ -2206,6 +2208,7 @@ def health():
         "fnUnsubscribeSigningConfigured": bool(FN_UNSUBSCRIBE_SIGNING_SECRET),
         "fnDirectDkimConfigured": bool(FN_OUTREACH_DKIM_PRIVATE_KEY_B64),
         "fnDirectOutreachEnabled": FN_DIRECT_OUTREACH_ENABLED,
+        "fnInitialSendOverride": FN_INITIAL_SEND_OVERRIDE,
         "mailshakeRequiredForDirectOutreach": False,
         "mailshakeRuntimeEnabled": MAILSHAKE_RUNTIME_ENABLED,
         "directSuppressionStore": "ZOHO_IMAP",
