@@ -2161,8 +2161,10 @@ def startup():
         f"SRE_BRIDGE startup apiKeyConfigured={bool(REPLY_API_KEY)} replySyncEnabled={REPLY_SYNC_ENABLED} mailshakeApiKeyConfigured={bool(MAILSHAKE_API_KEY)} mailshakeCampaignId={MAILSHAKE_CAMPAIGN_ID} complianceHold={MAILSHAKE_COMPLIANCE_HOLD} sequenceId={SEQUENCE_ID} configPath={CONFIG_PATH} prospectCount={startup_count}",
         flush=True,
     )
-    threading.Thread(target=test_mailshake_connection, daemon=True).start()
-    threading.Thread(target=log_compliance_test_status_once, daemon=True).start()
+    if MAILSHAKE_API_KEY:
+        threading.Thread(target=test_mailshake_connection, daemon=True).start()
+        if MAILSHAKE_COMPLIANCE_TEST_CAMPAIGN_ID > 0:
+            threading.Thread(target=log_compliance_test_status_once, daemon=True).start()
     if MAILSHAKE_API_KEY and MAILSHAKE_CAMPAIGN_ID > 0:
         threading.Thread(target=mailshake_monitor_runner, daemon=True).start()
         if MAILSHAKE_PUSH_SETUP_ON_STARTUP and MAILSHAKE_PUSH_SECRET:
@@ -2203,6 +2205,9 @@ def health():
         "fnUnsubscribeSigningConfigured": bool(FN_UNSUBSCRIBE_SIGNING_SECRET),
         "fnDirectDkimConfigured": bool(FN_OUTREACH_DKIM_PRIVATE_KEY_B64),
         "fnDirectOutreachEnabled": FN_DIRECT_OUTREACH_ENABLED,
+        "mailshakeRequiredForDirectOutreach": False,
+        "directSuppressionStore": "ZOHO_IMAP",
+        "directSendLedger": "ZOHO_SENT_MAIL",
     }
 
 
