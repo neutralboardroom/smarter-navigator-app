@@ -368,6 +368,57 @@ def _persist_zoho_suppression(email: str, reason: str):
         )
 
 
+def _persist_zoho_domain_suppression(domain: str, reason: str):
+    domain_value = str(domain or "").strip().lower().rstrip(".")
+    if "." not in domain_value:
+        raise RuntimeError("invalid suppression domain")
+    with _imap_connect() as client:
+        _ensure_suppression_mailbox(client)
+        marker = EmailMessage(policy=email_policy.SMTP)
+        marker["From"] = FN_OUTREACH_SMTP_USER
+        marker["To"] = FN_OUTREACH_SMTP_USER
+        marker["Subject"] = f"Franklin Navigator domain suppression: {domain_value}"
+        marker["Date"] = formatdate(localtime=True)
+        marker["Message-ID"] = make_msgid(domain="franklinnavigator.com")
+        marker["X-Franklin-Suppression-Domain"] = domain_value
+        marker["X-Franklin-Suppression-Reason"] = str(reason or "unspecified")[:120]
+        marker.set_content("Durable Franklin Navigator outreach domain suppression marker.")
+        client.append(
+            f'"{FN_SUPPRESSION_MAILBOX}"',
+            "\\Seen",
+            imaplib.Time2Internaldate(time.time()),
+            marker.as_bytes(policy=email_policy.SMTP),
+        )
+
+
+def _zoho_domain_suppression_set():
+    domains = set()
+    with _imap_connect() as client:
+        _ensure_suppression_mailbox(client)
+        status, data = client.search(None, "ALL")
+        if status != "OK":
+            raise RuntimeError("domain suppression mailbox search failed")
+        ids = [x for x in (data[0] or b"").split() if x]
+        for msg_id in ids[-5000:]:
+            status2, msg_data = client.fetch(
+                msg_id,
+                '(BODY.PEEK[HEADER.FIELDS (X-FRANKLIN-SUPPRESSION-DOMAIN)])',
+            )
+            if status2 != "OK":
+                continue
+            raw = b"".join(
+                part[1] for part in msg_data
+                if isinstance(part, tuple) and isinstance(part[1], (bytes, bytearray))
+            )
+            if not raw:
+                continue
+            msg = BytesParser(policy=email_policy.default).parsebytes(raw)
+            value = str(msg.get("X-Franklin-Suppression-Domain") or "").strip().lower().rstrip(".")
+            if "." in value:
+                domains.add(value)
+    return domains
+
+
 def _zoho_suppression_set():
     emails = set()
     with _imap_connect() as client:
@@ -476,7 +527,7 @@ def send_franklin_smtp_message(to_email: str, subject: str, plain_body: str, htm
     if outreach_key:
         msg["X-Franklin-Outreach-Key"] = outreach_key
         msg["X-Franklin-Campaign"] = "FN-FIRST10-2026-09"
-    raw = msg.as_bytes(policy=email_policy.SMTP)
+    raw = msg.as_bytes(policy=msg.policy)
     include_headers = [
         b"from", b"to", b"reply-to", b"subject", b"date", b"message-id",
         b"list-id", b"list-unsubscribe", b"list-unsubscribe-post", b"feedback-id"
@@ -594,6 +645,46 @@ def _imap_has_reply_since(client, sender_email: str, since_dt):
     date_text = since_dt.astimezone(timezone.utc).strftime("%d-%b-%Y")
     status, data = client.search(None, "SINCE", date_text, "FROM", sender_email)
     return status == "OK" and bool((data[0] or b"").strip())
+
+
+def _imap_reply_signal_since(client, sender_email: str, since_dt):
+    status, _ = client.select("INBOX", readonly=True)
+    if status != "OK":
+        raise RuntimeError("IMAP inbox select failed")
+    date_text = since_dt.astimezone(timezone.utc).strftime("%d-%b-%Y")
+    status, data = client.search(None, "SINCE", date_text, "FROM", sender_email)
+    if status != "OK":
+        return None
+    ids = [x for x in (data[0] or b"").split() if x][-20:]
+    if not ids:
+        return None
+    org_phrases = (
+        "do not contact our company",
+        "do not contact our organization",
+        "remove our organization",
+        "remove our company",
+        "stop emailing anyone here",
+        "stop emailing our company",
+        "stop emailing our organization",
+        "do not contact this domain",
+        "do not email anyone at",
+        "do not contact anyone at",
+    )
+    for msg_id in ids:
+        status2, msg_data = client.fetch(
+            msg_id,
+            "(BODY.PEEK[HEADER.FIELDS (SUBJECT FROM)] BODY.PEEK[TEXT]<0.8192>)",
+        )
+        if status2 != "OK":
+            continue
+        raw = b"".join(
+            part[1] for part in msg_data
+            if isinstance(part, tuple) and isinstance(part[1], (bytes, bytearray))
+        )
+        blob = raw.decode("utf-8", "ignore").lower()
+        if any(phrase in blob for phrase in org_phrases):
+            return "org_dnc"
+    return "reply"
 
 
 def _imap_detect_delivery_problem(client, target_email: str, since_dt):
@@ -720,6 +811,7 @@ def _direct_scan_once(send_if_due=False):
         sent_mailbox, records = _imap_search_sent_records(client)
         record_map = _direct_record_map(records)
         unsubscribed = _zoho_suppression_set()
+        zoho_domain_suppressions = _zoho_domain_suppression_set()
         suppressed = []
         bounce_holds = []
         complaint_holds = []
@@ -745,7 +837,7 @@ def _direct_scan_once(send_if_due=False):
                 suppressed.append(email_addr)
                 continue
             safety_state = load_org_safety_state()
-            if domain in (safety_state.get("domain_holds") or {}) or domain in (safety_state.get("domain_suppressions") or {}):
+            if domain in zoho_domain_suppressions or domain in (safety_state.get("domain_holds") or {}) or domain in (safety_state.get("domain_suppressions") or {}):
                 suppressed.append(email_addr)
                 continue
 
@@ -770,8 +862,19 @@ def _direct_scan_once(send_if_due=False):
                     if not previous_record or not previous_record.get("date"):
                         eligible = False
                     else:
-                        if _imap_has_reply_since(client, email_addr, previous_record["date"]):
+                        reply_signal = _imap_reply_signal_since(client, email_addr, previous_record["date"])
+                        if reply_signal:
                             stopped_replies.append(email_addr)
+                            if reply_signal == "org_dnc":
+                                _persist_zoho_domain_suppression(domain, "organization_wide_do_not_contact")
+                                global_hold = global_hold or f"ORGANIZATION_WIDE_DNC:{domain}"
+                                alerts.append({
+                                    "priority": "HIGH",
+                                    "triggerType": "ORGANIZATION_WIDE_DO_NOT_CONTACT",
+                                    "domain": domain,
+                                    "email": email_addr,
+                                    "automaticAction": "DOMAIN_SUPPRESSION_AND_DIRECT_OUTREACH_HOLD",
+                                })
                             eligible = False
                             break
                         problem = _imap_detect_delivery_problem(client, email_addr, previous_record["date"])
@@ -782,6 +885,7 @@ def _direct_scan_once(send_if_due=False):
                             except Exception:
                                 pass
                             global_hold = global_hold or f"PILOT_BOUNCE:{email_addr}"
+                            alerts.append({"priority":"HIGH","triggerType":"BOUNCE","email":email_addr,"automaticAction":"RECIPIENT_SUPPRESSION_AND_DIRECT_OUTREACH_HOLD"})
                             eligible = False
                             break
                         if problem == "complaint":
@@ -791,6 +895,7 @@ def _direct_scan_once(send_if_due=False):
                             except Exception:
                                 pass
                             global_hold = global_hold or f"PILOT_COMPLAINT:{email_addr}"
+                            alerts.append({"priority":"HIGH","triggerType":"SPAM_COMPLAINT","email":email_addr,"domain":domain,"automaticAction":"RECIPIENT_SUPPRESSION_AND_DIRECT_OUTREACH_HOLD"})
                             eligible = False
                             break
                         wait_days = int(step.get("wait_business_days_after_previous") or 0)
@@ -847,6 +952,24 @@ def _direct_scan_once(send_if_due=False):
         }
         with _state_lock:
             _state["directOutreach"].update(summary)
+        print(
+            "SRE_BRIDGE DIRECT_OUTREACH_STATUS "
+            + json.dumps(
+                {
+                    "enabled": summary["enabled"],
+                    "initialSent": summary["initialSent"],
+                    "followup1Sent": summary["followup1Sent"],
+                    "followup2Sent": summary["followup2Sent"],
+                    "suppressedCount": len(summary["suppressed"]),
+                    "stoppedForReplyCount": len(summary["stoppedForReply"]),
+                    "globalHold": summary["globalHold"],
+                    "nextEligibleCount": len(summary["nextEligible"]),
+                    "imapConnection": summary["imapConnection"],
+                },
+                sort_keys=True,
+            ),
+            flush=True,
+        )
         return summary
 
 
