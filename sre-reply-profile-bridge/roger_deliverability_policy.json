@@ -6,13 +6,21 @@
     "campaign_id": 1553662,
     "max_total_sends": 10,
     "max_daily_sends": 10,
-    "max_messages_per_sequence": 1,
+    "max_messages_per_sequence": 3,
     "pause_on_any_bounce": true,
     "pause_on_any_unsubscribe": true,
     "pause_on_roster_mismatch": true,
     "pause_on_profile_binding_mismatch": true,
     "tracking_opens": false,
-    "tracking_clicks": false
+    "tracking_clicks": false,
+    "provider": "DIRECT_ZOHO_SMTP_VIA_FRANKLIN_SRE",
+    "direct_campaign_id": "FN-FIRST10-2026-09",
+    "legacy_mailshake_campaign_id": 1553662,
+    "authorized_followups": 2,
+    "mailshake_runtime_enabled": false,
+    "owner_bcc": "reachrgnow@gmail.com",
+    "send_window": "Monday-Friday 09:00-16:00 America/Chicago",
+    "minimum_minutes_between_sends": 12
   },
   "scale": {
     "automatic_scale_up": false,
@@ -41,7 +49,7 @@
     "mailshake_visible_unsubscribe_mode_current_pilot": "two-click-allowed",
     "rfc8058_one_click_header_support_must_be_verified_before_high_volume": true,
     "do_not_assume_mailshake_visible_one_click_equals_rfc8058": true,
-    "rfc8058_received_message_proof_required_before_campaign_release": false,
+    "rfc8058_received_message_proof_required_before_campaign_release": true,
     "rfc8058_required_headers": {
       "List-Unsubscribe": "HTTPS URL required",
       "List-Unsubscribe-Post": "List-Unsubscribe=One-Click"
@@ -67,6 +75,16 @@
       ]
     },
     "rfc8058_required_before_bulk_sender_scale": true,
-    "rfc8058_recheck_trigger": "before any material scale-up approaching mailbox-provider bulk-sender thresholds or after sending-architecture/provider changes"
+    "rfc8058_recheck_trigger": "before any material scale-up approaching mailbox-provider bulk-sender thresholds or after sending-architecture/provider changes",
+    "rfc8058_proof_status": "PASS_2026-09-29_DIRECT_ZOHO",
+    "rfc8058_required_for_all_current_promotional_sends": true,
+    "list_unsubscribe_plain_https_header_verified": true,
+    "list_unsubscribe_post_verified": true,
+    "rfc8058_headers_covered_by_franklin_dkim": true,
+    "franklin_dkim_selector": "fnmail1",
+    "feedback_id_enabled": true,
+    "direct_suppression_store": "ZOHO_IMAP",
+    "direct_send_ledger": "ZOHO_SENT_MAIL",
+    "mailshake_runtime_required": false
   }
 }
