@@ -1,0 +1,57 @@
+{
+  "schema": "sre.franklin.direct-outreach-sequence.v1",
+  "campaign_id": "FN-FIRST10-2026-09",
+  "sender": "Franklin Navigator Community Team <community@franklinnavigator.com>",
+  "owner_bcc": "reachrgnow@gmail.com",
+  "timezone": "America/Chicago",
+  "send_window": {
+    "weekdays": [
+      "MO",
+      "TU",
+      "WE",
+      "TH",
+      "FR"
+    ],
+    "start": "09:00",
+    "end": "16:00",
+    "minimum_minutes_between_sends": 12,
+    "max_daily_initial_sends": 10
+  },
+  "stop_rules": {
+    "any_reply_from_recipient": true,
+    "any_unsubscribe": true,
+    "any_bounce_global_pilot_hold": true,
+    "any_spam_complaint_global_pilot_hold": true,
+    "any_org_domain_hold_or_suppression": true,
+    "no_followup_after_profile_correction_or_removal_request": true,
+    "no_followup_after_claim_or_membership_if_signal_available": true
+  },
+  "steps": [
+    {
+      "id": "initial",
+      "type": "initial",
+      "wait_business_days_after_previous": 0,
+      "subject": "Your Franklin Navigator community profile",
+      "body": "Hi {{Outreach_Greeting}},\n\nFranklin Navigator is a local community network that helps Franklin residents find and connect with local businesses, professionals, organizations and resources.\n\nYour Franklin Navigator profile:\n{{Profile_URL}}\n\nThere is no charge to claim and manage your basic profile.\n\nOptional Community Membership is $35/year, renewing annually until canceled. Membership can help you add more business details, services, hours, photos, website and contact links, booking or quote links where applicable, and additional local visibility and community-participation tools.\n\nFactual corrections and profile-removal requests are always free.\n\nQuestions? Just reply and we’ll be happy to help."
+    },
+    {
+      "id": "followup_1",
+      "type": "follow-up",
+      "wait_business_days_after_previous": 5,
+      "subject": "A quick follow-up on your Franklin Navigator profile",
+      "body": "Hi {{Outreach_Greeting}},\n\nJust following up on your Franklin Navigator community profile:\n{{Profile_URL}}\n\nClaiming and managing the basic profile is free. If anything is inaccurate, factual corrections and profile-removal requests are free as well.\n\nOptional Community Membership is $35/year for businesses that want richer profile details, useful customer links and additional local visibility.\n\nQuestions? Just reply and we’ll be happy to help."
+    },
+    {
+      "id": "followup_2",
+      "type": "follow-up",
+      "wait_business_days_after_previous": 7,
+      "subject": "Final note about your Franklin Navigator profile",
+      "body": "Hi {{Outreach_Greeting}},\n\nOne final note about your Franklin Navigator community profile:\n{{Profile_URL}}\n\nYou can claim and manage the basic profile free, and factual corrections or removal requests are always free. Optional Community Membership is $35/year if you want the additional profile and visibility tools.\n\nNo action is required. If you have a question, just reply and we’ll be happy to help."
+    }
+  ],
+  "notes": [
+    "Exactly two follow-ups are enabled for the pilot; the prior third follow-up draft is intentionally not enabled to reduce complaint risk.",
+    "Follow-ups are never sent after a reply, unsubscribe, bounce, complaint, correction/removal request, organization/domain suppression, or other stop signal.",
+    "Mailshake campaign 1553662 remains paused and is not the sending engine."
+  ]
+}
