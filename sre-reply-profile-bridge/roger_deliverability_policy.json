@@ -20,7 +20,16 @@
     "mailshake_runtime_enabled": false,
     "owner_bcc": "reachrgnow@gmail.com",
     "send_window": "Monday-Friday 09:00-16:00 America/Chicago",
-    "minimum_minutes_between_sends": 12
+    "minimum_minutes_between_sends": 12,
+    "initial_cohort_closed": true,
+    "initial_recipient_count": 10,
+    "incident_no_followup": [
+      "catering@littlehatsmarket.com"
+    ],
+    "actual_initial_duplicate_incident_count": 5,
+    "exact_once_ledger": "ZOHO_IMAP_OUTREACH_LEDGER",
+    "ambiguous_reservation_fail_closed": true,
+    "sequence_configuration_fail_closed": true
   },
   "scale": {
     "automatic_scale_up": false,
@@ -69,9 +78,9 @@
         "valid physical postal address present",
         "tracking opens off",
         "tracking clicks off",
-        "first-touch only",
         "no automatic scale-up",
-        "fail-closed bounce/unsubscribe/complaint monitoring remains active"
+        "fail-closed bounce/unsubscribe/complaint monitoring remains active",
+        "initial message plus exactly two owner-approved follow-ups"
       ]
     },
     "rfc8058_required_before_bulk_sender_scale": true,
@@ -84,7 +93,9 @@
     "franklin_dkim_selector": "fnmail1",
     "feedback_id_enabled": true,
     "direct_suppression_store": "ZOHO_IMAP",
-    "direct_send_ledger": "ZOHO_SENT_MAIL",
-    "mailshake_runtime_required": false
+    "direct_send_ledger": "ZOHO_IMAP_OUTREACH_LEDGER",
+    "mailshake_runtime_required": false,
+    "initial_cohort_reopen_requires_owner_approval": true,
+    "ambiguous_send_reservation_causes_hold": true
   }
 }
