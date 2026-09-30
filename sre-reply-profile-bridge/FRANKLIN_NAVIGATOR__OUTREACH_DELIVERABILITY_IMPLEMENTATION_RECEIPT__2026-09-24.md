@@ -197,3 +197,19 @@ Disposition:
 - Mailshake may be canceled without affecting the qualified Franklin Navigator direct-Zoho outreach path.
 - The legacy Mailshake campaign must not be unpaused or used to send.
 - Any material provider/mailbox/SMTP/DKIM/domain/unsubscribe-endpoint change requires fresh owner-controlled delivery verification before further outreach.
+
+
+## FN-SRE-BRIDGE-2.3.0 — 2026-09-30
+
+Material safety hardening completed without expanding the recipient cohort or changing approved copy/pricing:
+- first-10 initial cohort closed after ledger status reached 10/10
+- explicit closed-cohort guard prevents accidental initial re-send if ledger state is later missing
+- dedicated Zoho IMAP outreach ledger is now documented as authoritative; Zoho Sent Mail is not relied upon
+- RESERVED-without-SENT ambiguity causes a global fail-closed hold
+- daily send cap and spacing accounting now count SENT records only
+- exact sequence/sender/BCC/timezone/window/spacing/cap/step-count validation runs before direct-outreach processing
+- direct status exposes release, configuration fingerprint, roster count, owner BCC, cohort-closed state, pilot-complete state, and ambiguous reservations
+- initial-send outside-hours override is retired after cohort completion
+- Little Hats incident record corrected to five initial-message copies and remains no-follow-up
+- Mailshake and Reply.io remain disabled as sending runtimes
+- direct Zoho outreach, Zoho suppression store, owner BCC audit copies, RFC 8058 one-click unsubscribe, SPF/DKIM/DMARC/TLS protections, and exactly two approved follow-ups remain unchanged
