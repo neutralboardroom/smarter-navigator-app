@@ -213,3 +213,23 @@ Material safety hardening completed without expanding the recipient cohort or ch
 - Little Hats incident record corrected to five initial-message copies and remains no-follow-up
 - Mailshake and Reply.io remain disabled as sending runtimes
 - direct Zoho outreach, Zoho suppression store, owner BCC audit copies, RFC 8058 one-click unsubscribe, SPF/DKIM/DMARC/TLS protections, and exactly two approved follow-ups remain unchanged
+
+
+## FN-SRE-BRIDGE-2.4.0 — 2026-09-30
+
+Next-version improvements:
+- permanently firewall Reply.io and Mailshake runtime activation through stale environment toggles
+- enforce exact first-10 roster membership at the SMTP transport boundary
+- enforce exact owner BCC `reachrgnow@gmail.com` at the SMTP transport boundary
+- DKIM-sign `X-Franklin-Release` and `X-Franklin-Outreach-Step` audit headers
+- require the initial cohort to remain closed before any follow-up can become eligible
+- fail closed on approved subject-line drift
+- fail closed if approved free-claim, no-purchase-required, $35/year, free correction/removal, or commercial-outreach copy is removed from either plain-text or HTML templates
+- preserve Little Hats as no-follow-up
+- preserve direct Zoho, exact-once ledger, 12-minute spacing, weekday Central-time follow-ups, RFC 8058, suppression, DKIM/SPF/DMARC/TLS, and owner audit BCC
+
+### Next Version Improvement List
+- verify the first real follow-up end-to-end before the remaining follow-ups proceed
+- continue negative-signal monitoring during the waiting period
+- keep expansion and scaling locked without explicit owner authorization
+- evaluate final removal of archived legacy-provider code after recovery/audit review
