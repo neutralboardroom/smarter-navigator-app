@@ -25,6 +25,7 @@ from bs4 import BeautifulSoup
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse
 
+SRE_BRIDGE_RELEASE = "FN-SRE-BRIDGE-2.3.0"
 API_BASE = "https://api.reply.io/v3"
 REPLY_API_KEY = os.environ.get("REPLY_API_KEY", "").strip()
 MAILSHAKE_API_BASE = "https://api.mailshake.com/2017-04-01"
@@ -61,6 +62,7 @@ FN_SEND_LEDGER_MAILBOX = os.environ.get("FN_SEND_LEDGER_MAILBOX", "Franklin Navi
 FN_SUPPRESSION_SEED_ON_STARTUP = os.environ.get("FN_SUPPRESSION_SEED_ON_STARTUP", "false").strip().lower() in {"1", "true", "yes"}
 FN_DIRECT_OUTREACH_ENABLED = os.environ.get("FN_DIRECT_OUTREACH_ENABLED", "false").strip().lower() in {"1", "true", "yes"}
 FN_INITIAL_SEND_OVERRIDE = os.environ.get("FN_INITIAL_SEND_OVERRIDE", "false").strip().lower() in {"1", "true", "yes"}
+FN_INITIAL_COHORT_CLOSED = os.environ.get("FN_INITIAL_COHORT_CLOSED", "false").strip().lower() in {"1", "true", "yes"}
 FN_DIRECT_SEQUENCE_PATH = os.environ.get("FN_DIRECT_SEQUENCE_PATH", os.path.join(os.path.dirname(__file__), "direct_outreach_sequence.json")).strip()
 FN_PROFILE_PREFLIGHT_ON_STARTUP = os.environ.get("FN_PROFILE_PREFLIGHT_ON_STARTUP", "false").strip().lower() in {"1", "true", "yes"}
 RFC8058_SCALE_PROOF = os.environ.get("RFC8058_SCALE_PROOF", "false").strip().lower() in {"1", "true", "yes"}
@@ -127,7 +129,7 @@ GENERIC_FRANKLIN_PATHS = {
     "/",
 }
 
-app = FastAPI(title="SRE Outreach Provider Bridge", version="1.7.0")
+app = FastAPI(title="SRE Outreach Provider Bridge", version="2.3.0")
 _state_lock = threading.Lock()
 _state = {
     "lastRunAt": None,
@@ -628,9 +630,68 @@ def _resolved_direct_sequence_path():
     return os.path.join(os.path.dirname(__file__), os.path.basename(value))
 
 
+def _direct_config_fingerprint(sequence: dict) -> str:
+    payload = {
+        "release": SRE_BRIDGE_RELEASE,
+        "roster": [
+            {
+                "email": str(x.get("email") or "").strip().lower(),
+                "profileId": str(x.get("profileId") or "").strip(),
+                "profileUrl": str(x.get("profileUrl") or "").strip(),
+            }
+            for x in FIRST10_CONTACT_ROSTER
+        ],
+        "sequence": sequence,
+    }
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def _validate_direct_sequence(sequence: dict):
+    if not isinstance(sequence, dict):
+        raise RuntimeError("DIRECT_SEQUENCE_INVALID")
+    if str(sequence.get("campaign_id") or "") != "FN-FIRST10-2026-09":
+        raise RuntimeError("DIRECT_SEQUENCE_CAMPAIGN_DRIFT")
+    if str(sequence.get("sender") or "").strip() != "Franklin Navigator Community Team <community@franklinnavigator.com>":
+        raise RuntimeError("DIRECT_SEQUENCE_SENDER_DRIFT")
+    if str(sequence.get("owner_bcc") or "").strip().lower() != "reachrgnow@gmail.com":
+        raise RuntimeError("DIRECT_SEQUENCE_OWNER_BCC_DRIFT")
+    if str(sequence.get("timezone") or "") != "America/Chicago":
+        raise RuntimeError("DIRECT_SEQUENCE_TIMEZONE_DRIFT")
+    window = sequence.get("send_window") or {}
+    if list(window.get("weekdays") or []) != ["MO", "TU", "WE", "TH", "FR"]:
+        raise RuntimeError("DIRECT_SEQUENCE_WEEKDAY_DRIFT")
+    if str(window.get("start") or "") != "09:00" or str(window.get("end") or "") != "16:00":
+        raise RuntimeError("DIRECT_SEQUENCE_WINDOW_DRIFT")
+    if int(window.get("minimum_minutes_between_sends") or 0) < 12:
+        raise RuntimeError("DIRECT_SEQUENCE_SPACING_WEAKENED")
+    if int(window.get("max_daily_initial_sends") or 0) > 10:
+        raise RuntimeError("DIRECT_SEQUENCE_DAILY_CAP_WEAKENED")
+    steps = sequence.get("steps") or []
+    step_ids = [str(x.get("id") or "") for x in steps]
+    if step_ids != ["initial", "followup_1", "followup_2"]:
+        raise RuntimeError("DIRECT_SEQUENCE_STEP_DRIFT")
+    waits = [int(x.get("wait_business_days_after_previous") or 0) for x in steps]
+    if waits != [0, 5, 7]:
+        raise RuntimeError("DIRECT_SEQUENCE_WAIT_DRIFT")
+    for step in steps:
+        subject = str(step.get("subject") or "").strip()
+        body = str(step.get("body") or "")
+        html_body = str(step.get("html_body") or "")
+        if not subject or not body or not html_body:
+            raise RuntimeError("DIRECT_SEQUENCE_CONTENT_MISSING")
+        if "{{Outreach_Greeting}}" not in body or "{{Profile_URL}}" not in body:
+            raise RuntimeError("DIRECT_SEQUENCE_PLAIN_TEMPLATE_DRIFT")
+        if "{{Outreach_Greeting}}" not in html_body or "{{Profile_URL}}" not in html_body:
+            raise RuntimeError("DIRECT_SEQUENCE_HTML_TEMPLATE_DRIFT")
+    return sequence
+
+
 def load_direct_sequence():
     with open(_resolved_direct_sequence_path(), "r", encoding="utf-8") as f:
-        return json.load(f)
+        sequence = json.load(f)
+    return _validate_direct_sequence(sequence)
 
 
 def _imap_connect():
@@ -1010,7 +1071,16 @@ def _direct_scan_once(send_if_due=False):
             seed_key = _direct_key(seed_email, "initial")
             if not any(r.get("key") == seed_key and r.get("status") == "SENT" for r in records):
                 records.append({"key": seed_key, "status": "SENT", "to": seed_email, "subject": "Your Franklin Navigator community profile", "messageId": "INCIDENT-SEED", "date": datetime.fromisoformat(seed_iso)})
-        record_map = _direct_record_map([r for r in records if r.get("status") == "SENT"])
+        sent_records = [r for r in records if r.get("status") == "SENT"]
+        record_map = _direct_record_map(sent_records)
+        sent_keys = {str(r.get("key") or "") for r in sent_records if r.get("key")}
+        reserved_without_sent = sorted({
+            str(r.get("key") or "")
+            for r in records
+            if r.get("status") == "RESERVED"
+            and r.get("key")
+            and str(r.get("key") or "") not in sent_keys
+        })
         unsubscribed = _zoho_suppression_set()
         zoho_domain_suppressions = _zoho_domain_suppression_set()
         suppressed = []
@@ -1022,8 +1092,30 @@ def _direct_scan_once(send_if_due=False):
         roster_emails = {str(x.get("email") or "").strip().lower() for x in FIRST10_CONTACT_ROSTER}
         pilot_unsubs = sorted(roster_emails & unsubscribed)
         global_hold = f"PILOT_UNSUBSCRIBE:{pilot_unsubs[0]}" if pilot_unsubs else None
+        if reserved_without_sent:
+            global_hold = global_hold or f"AMBIGUOUS_SEND_RESERVATION:{reserved_without_sent[0]}"
+            alerts.append({
+                "priority": "HIGH",
+                "triggerType": "AMBIGUOUS_SEND_RESERVATION",
+                "outreachKey": reserved_without_sent[0],
+                "automaticAction": "DIRECT_OUTREACH_HOLD",
+            })
 
-        dated_records = [r for r in records if r.get("date")]
+        expected_initial_keys = {
+            _direct_key(str(x.get("email") or "").strip().lower(), "initial")
+            for x in FIRST10_CONTACT_ROSTER
+        }
+        missing_closed_initial_keys = sorted(expected_initial_keys - set(record_map.keys()))
+        if FN_INITIAL_COHORT_CLOSED and missing_closed_initial_keys:
+            global_hold = global_hold or "INITIAL_COHORT_CLOSED_LEDGER_MISMATCH"
+            alerts.append({
+                "priority": "HIGH",
+                "triggerType": "INITIAL_COHORT_CLOSED_LEDGER_MISMATCH",
+                "missingCount": len(missing_closed_initial_keys),
+                "automaticAction": "DIRECT_OUTREACH_HOLD",
+            })
+
+        dated_records = [r for r in sent_records if r.get("date")]
         last_send_dt = max([r["date"] for r in dated_records], default=None)
         today = now_local.date()
         sends_today = sum(
@@ -1060,7 +1152,7 @@ def _direct_scan_once(send_if_due=False):
                     continue
 
                 if index == 0:
-                    eligible = True
+                    eligible = not FN_INITIAL_COHORT_CLOSED
                 else:
                     if not previous_record or not previous_record.get("date"):
                         eligible = False
@@ -1161,6 +1253,13 @@ def _direct_scan_once(send_if_due=False):
             "sentMailbox": sent_mailbox,
             "imapConnection": "PASS",
             "campaignId": sequence.get("campaign_id"),
+            "release": SRE_BRIDGE_RELEASE,
+            "configurationFingerprint": _direct_config_fingerprint(sequence),
+            "rosterCount": len(FIRST10_CONTACT_ROSTER),
+            "ownerBcc": str(sequence.get("owner_bcc") or ""),
+            "initialCohortClosed": FN_INITIAL_COHORT_CLOSED,
+            "pilotInitialComplete": initial_sent == len(FIRST10_CONTACT_ROSTER),
+            "reservedWithoutSent": reserved_without_sent,
             "initialSent": initial_sent,
             "followup1Sent": followup1_sent,
             "followup2Sent": followup2_sent,
@@ -2382,7 +2481,7 @@ def startup():
     except Exception:
         startup_count = -1
     print(
-        f"SRE_BRIDGE startup apiKeyConfigured={bool(REPLY_API_KEY)} replySyncEnabled={REPLY_SYNC_ENABLED} mailshakeApiKeyConfigured={bool(MAILSHAKE_API_KEY)} mailshakeCampaignId={MAILSHAKE_CAMPAIGN_ID} complianceHold={MAILSHAKE_COMPLIANCE_HOLD} sequenceId={SEQUENCE_ID} configPath={CONFIG_PATH} prospectCount={startup_count}",
+        f"SRE_BRIDGE startup release={SRE_BRIDGE_RELEASE} apiKeyConfigured={bool(REPLY_API_KEY)} replySyncEnabled={REPLY_SYNC_ENABLED} mailshakeApiKeyConfigured={bool(MAILSHAKE_API_KEY)} mailshakeCampaignId={MAILSHAKE_CAMPAIGN_ID} complianceHold={MAILSHAKE_COMPLIANCE_HOLD} sequenceId={SEQUENCE_ID} configPath={CONFIG_PATH} prospectCount={startup_count}",
         flush=True,
     )
     if MAILSHAKE_RUNTIME_ENABLED and MAILSHAKE_API_KEY:
@@ -2494,10 +2593,11 @@ def health():
         "fnDirectDkimConfigured": bool(FN_OUTREACH_DKIM_PRIVATE_KEY_B64),
         "fnDirectOutreachEnabled": FN_DIRECT_OUTREACH_ENABLED,
         "fnInitialSendOverride": FN_INITIAL_SEND_OVERRIDE,
+        "fnInitialCohortClosed": FN_INITIAL_COHORT_CLOSED,
         "mailshakeRequiredForDirectOutreach": False,
         "mailshakeRuntimeEnabled": MAILSHAKE_RUNTIME_ENABLED,
         "directSuppressionStore": "ZOHO_IMAP",
-        "directSendLedger": "ZOHO_SENT_MAIL",
+        "directSendLedger": "ZOHO_IMAP_OUTREACH_LEDGER",
     }
 
 
