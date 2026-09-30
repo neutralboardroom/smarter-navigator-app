@@ -25,16 +25,19 @@ from bs4 import BeautifulSoup
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse
 
-SRE_BRIDGE_RELEASE = "FN-SRE-BRIDGE-2.3.0"
+SRE_BRIDGE_RELEASE = "FN-SRE-BRIDGE-2.4.0"
 API_BASE = "https://api.reply.io/v3"
 REPLY_API_KEY = os.environ.get("REPLY_API_KEY", "").strip()
 MAILSHAKE_API_BASE = "https://api.mailshake.com/2017-04-01"
 MAILSHAKE_API_KEY = os.environ.get("MAILSHAKE_API_KEY", "").strip()
-MAILSHAKE_RUNTIME_ENABLED = os.environ.get("MAILSHAKE_RUNTIME_ENABLED", "false").strip().lower() in {"1", "true", "yes"}
+LEGACY_PROVIDER_RUNTIME_FORBIDDEN = True
+MAILSHAKE_RUNTIME_REQUESTED = os.environ.get("MAILSHAKE_RUNTIME_ENABLED", "false").strip().lower() in {"1", "true", "yes"}
+MAILSHAKE_RUNTIME_ENABLED = False
 MAILSHAKE_CAMPAIGN_ID = int(os.environ.get("MAILSHAKE_CAMPAIGN_ID", "0") or 0)
 MAILSHAKE_COMPLIANCE_TEST_CAMPAIGN_ID = int(os.environ.get("MAILSHAKE_COMPLIANCE_TEST_CAMPAIGN_ID", "1554023") or 1554023)
 MAILSHAKE_MONITOR_INTERVAL_SECONDS = int(os.environ.get("MAILSHAKE_MONITOR_INTERVAL_SECONDS", "900"))
-REPLY_SYNC_ENABLED = os.environ.get("REPLY_SYNC_ENABLED", "false").strip().lower() in {"1", "true", "yes"}
+REPLY_SYNC_REQUESTED = os.environ.get("REPLY_SYNC_ENABLED", "false").strip().lower() in {"1", "true", "yes"}
+REPLY_SYNC_ENABLED = False
 MAILSHAKE_PUSH_SECRET = os.environ.get("MAILSHAKE_PUSH_SECRET", "").strip()
 MAILSHAKE_PUBLIC_BASE_URL = os.environ.get("MAILSHAKE_PUBLIC_BASE_URL", "https://sre-reply-profile-bridge.onrender.com").rstrip("/")
 MAILSHAKE_PUSH_SETUP_ON_STARTUP = os.environ.get("MAILSHAKE_PUSH_SETUP_ON_STARTUP", "false").strip().lower() in {"1", "true", "yes"}
@@ -129,7 +132,7 @@ GENERIC_FRANKLIN_PATHS = {
     "/",
 }
 
-app = FastAPI(title="SRE Outreach Provider Bridge", version="2.3.0")
+app = FastAPI(title="SRE Outreach Provider Bridge", version="2.4.0")
 _state_lock = threading.Lock()
 _state = {
     "lastRunAt": None,
@@ -585,17 +588,33 @@ def send_owner_alert_smtp(subject: str, plain_body: str):
 def send_franklin_smtp_message(to_email: str, subject: str, plain_body: str, html_body: str = "", bcc_email: str = "", outreach_key: str = ""):
     if not FN_OUTREACH_SMTP_PASSWORD:
         raise RuntimeError("FN_OUTREACH_SMTP_PASSWORD is not configured")
+    to_email = str(to_email or "").strip().lower()
+    bcc_email = str(bcc_email or "").strip().lower()
+    if outreach_key:
+        allowed_recipients = {
+            str(x.get("email") or "").strip().lower()
+            for x in FIRST10_CONTACT_ROSTER
+        }
+        if to_email not in allowed_recipients:
+            raise RuntimeError("DIRECT_OUTREACH_RECIPIENT_NOT_IN_AUTHORIZED_ROSTER")
+        if bcc_email != FN_OUTREACH_OWNER_TEST_EMAIL.lower():
+            raise RuntimeError("DIRECT_OUTREACH_OWNER_BCC_REQUIRED")
     msg = build_franklin_message(to_email, subject, plain_body, html_body)
     if outreach_key:
         msg["X-Franklin-Outreach-Key"] = outreach_key
         msg["X-Franklin-Campaign"] = "FN-FIRST10-2026-09"
+        msg["X-Franklin-Release"] = SRE_BRIDGE_RELEASE
+        msg["X-Franklin-Outreach-Step"] = outreach_key.rsplit(":", 1)[-1]
     raw = msg.as_bytes(policy=msg.policy)
     include_headers = [
         b"from", b"to", b"reply-to", b"subject", b"date", b"message-id",
         b"list-id", b"list-unsubscribe", b"list-unsubscribe-post", b"feedback-id"
     ]
     if outreach_key:
-        include_headers.extend([b"x-franklin-outreach-key", b"x-franklin-campaign"])
+        include_headers.extend([
+            b"x-franklin-outreach-key", b"x-franklin-campaign",
+            b"x-franklin-release", b"x-franklin-outreach-step"
+        ])
     signature = dkim.sign(
         raw,
         selector=FN_OUTREACH_DKIM_SELECTOR.encode("ascii"),
@@ -675,16 +694,37 @@ def _validate_direct_sequence(sequence: dict):
     waits = [int(x.get("wait_business_days_after_previous") or 0) for x in steps]
     if waits != [0, 5, 7]:
         raise RuntimeError("DIRECT_SEQUENCE_WAIT_DRIFT")
+    expected_subjects = {
+        "initial": "Your Franklin Navigator community profile",
+        "followup_1": "Following up on your Franklin Navigator profile",
+        "followup_2": "Final note about your Franklin Navigator profile",
+    }
+    required_copy = (
+        "Claiming and managing the basic profile is free",
+        "no purchase is required",
+        "$35/year",
+        "profile-removal requests are always free",
+        "commercial community-outreach email from Franklin Navigator",
+    )
     for step in steps:
+        step_id = str(step.get("id") or "")
         subject = str(step.get("subject") or "").strip()
         body = str(step.get("body") or "")
         html_body = str(step.get("html_body") or "")
-        if not subject or not body or not html_body:
+        if subject != expected_subjects.get(step_id):
+            raise RuntimeError("DIRECT_SEQUENCE_SUBJECT_DRIFT")
+        if not body or not html_body:
             raise RuntimeError("DIRECT_SEQUENCE_CONTENT_MISSING")
         if "{{Outreach_Greeting}}" not in body or "{{Profile_URL}}" not in body:
             raise RuntimeError("DIRECT_SEQUENCE_PLAIN_TEMPLATE_DRIFT")
         if "{{Outreach_Greeting}}" not in html_body or "{{Profile_URL}}" not in html_body:
             raise RuntimeError("DIRECT_SEQUENCE_HTML_TEMPLATE_DRIFT")
+        normalized_plain = re.sub(r"\s+", " ", body).lower()
+        normalized_html = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", html_body)).lower()
+        for phrase in required_copy:
+            phrase_l = phrase.lower()
+            if phrase_l not in normalized_plain or phrase_l not in normalized_html:
+                raise RuntimeError("DIRECT_SEQUENCE_REQUIRED_COPY_DRIFT")
     return sequence
 
 
@@ -1194,7 +1234,18 @@ def _direct_scan_once(send_if_due=False):
                             eligible = False
                             break
                         wait_days = int(step.get("wait_business_days_after_previous") or 0)
-                        eligible = _business_days_between(previous_record["date"], datetime.now(timezone.utc), tz) >= wait_days
+                        if not FN_INITIAL_COHORT_CLOSED:
+                            global_hold = global_hold or "FOLLOWUP_REQUIRES_INITIAL_COHORT_CLOSED"
+                            alerts.append({
+                                "priority": "HIGH",
+                                "triggerType": "FOLLOWUP_REQUIRES_INITIAL_COHORT_CLOSED",
+                                "email": email_addr,
+                                "step": step_id,
+                                "automaticAction": "DIRECT_OUTREACH_HOLD",
+                            })
+                            eligible = False
+                        else:
+                            eligible = _business_days_between(previous_record["date"], datetime.now(timezone.utc), tz) >= wait_days
 
                 if eligible:
                     next_eligible.append({"email": email_addr, "step": step_id})
@@ -2484,6 +2535,18 @@ def startup():
         f"SRE_BRIDGE startup release={SRE_BRIDGE_RELEASE} apiKeyConfigured={bool(REPLY_API_KEY)} replySyncEnabled={REPLY_SYNC_ENABLED} mailshakeApiKeyConfigured={bool(MAILSHAKE_API_KEY)} mailshakeCampaignId={MAILSHAKE_CAMPAIGN_ID} complianceHold={MAILSHAKE_COMPLIANCE_HOLD} sequenceId={SEQUENCE_ID} configPath={CONFIG_PATH} prospectCount={startup_count}",
         flush=True,
     )
+    if MAILSHAKE_RUNTIME_REQUESTED or REPLY_SYNC_REQUESTED:
+        print(
+            "SRE_BRIDGE LEGACY_PROVIDER_FIREWALL "
+            + json.dumps({
+                "mailshakeRuntimeRequested": MAILSHAKE_RUNTIME_REQUESTED,
+                "replySyncRequested": REPLY_SYNC_REQUESTED,
+                "mailshakeRuntimeEnabled": False,
+                "replySyncEnabled": False,
+                "action": "REQUEST_IGNORED_LEGACY_PROVIDER_RUNTIME_RETIRED",
+            }, sort_keys=True),
+            flush=True,
+        )
     if MAILSHAKE_RUNTIME_ENABLED and MAILSHAKE_API_KEY:
         threading.Thread(target=test_mailshake_connection, daemon=True).start()
         if MAILSHAKE_COMPLIANCE_TEST_CAMPAIGN_ID > 0:
@@ -2596,7 +2659,12 @@ def health():
         "fnInitialSendOverride": FN_INITIAL_SEND_OVERRIDE,
         "fnInitialCohortClosed": FN_INITIAL_COHORT_CLOSED,
         "mailshakeRequiredForDirectOutreach": False,
+        "legacyProviderRuntimeForbidden": LEGACY_PROVIDER_RUNTIME_FORBIDDEN,
+        "mailshakeRuntimeRequested": MAILSHAKE_RUNTIME_REQUESTED,
         "mailshakeRuntimeEnabled": MAILSHAKE_RUNTIME_ENABLED,
+        "replySyncRequested": REPLY_SYNC_REQUESTED,
+        "replySyncEnabled": REPLY_SYNC_ENABLED,
+        "authorizedFollowupRecipientCount": len(FIRST10_CONTACT_ROSTER) - len(FIRST10_INCIDENT_NO_FOLLOWUP_EMAILS),
         "directSuppressionStore": "ZOHO_IMAP",
         "directSendLedger": "ZOHO_IMAP_OUTREACH_LEDGER",
     }
