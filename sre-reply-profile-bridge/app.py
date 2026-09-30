@@ -45,6 +45,7 @@ FN_OUTREACH_SMTP_PASSWORD = os.environ.get("FN_OUTREACH_SMTP_PASSWORD", "").stri
 FN_OUTREACH_PUBLIC_BASE_URL = os.environ.get("FN_OUTREACH_PUBLIC_BASE_URL", MAILSHAKE_PUBLIC_BASE_URL).rstrip("/")
 FN_OUTREACH_OWNER_TEST_EMAIL = os.environ.get("FN_OUTREACH_OWNER_TEST_EMAIL", "reachrgnow@gmail.com").strip()
 FN_OWNER_ALERT_BRIDGE_SECRET = os.environ.get("FN_OWNER_ALERT_BRIDGE_SECRET", "").strip()
+FN_TRANSACTIONAL_BRIDGE_SECRET = os.environ.get("FN_TRANSACTIONAL_BRIDGE_SECRET", "").strip()
 FN_OUTREACH_OWNER_TEST_ON_STARTUP = os.environ.get("FN_OUTREACH_OWNER_TEST_ON_STARTUP", "false").strip().lower() in {"1", "true", "yes"}
 FN_ONE_CLICK_SELF_TEST_ON_STARTUP = os.environ.get("FN_ONE_CLICK_SELF_TEST_ON_STARTUP", "false").strip().lower() in {"1", "true", "yes"}
 FN_OUTREACH_LIST_ID = "franklin-navigator-community-outreach.franklinnavigator.com"
@@ -525,6 +526,34 @@ def _direct_dkim_private_key():
         return base64.b64decode(FN_OUTREACH_DKIM_PRIVATE_KEY_B64)
     except Exception as exc:
         raise RuntimeError("FN_OUTREACH_DKIM_PRIVATE_KEY_B64 is invalid") from exc
+
+
+def send_franklin_transactional_smtp(to_email: str, subject: str, plain_body: str, html_body: str = ""):
+    if not FN_OUTREACH_SMTP_PASSWORD:
+        raise RuntimeError("FN_OUTREACH_SMTP_PASSWORD is not configured")
+    if not re.match(r"^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$", str(to_email or "").strip()):
+        raise RuntimeError("invalid transactional recipient")
+    msg = EmailMessage(policy=email_policy.SMTP)
+    msg["From"] = f"Franklin Navigator <{FN_OUTREACH_SMTP_USER}>"
+    msg["To"] = str(to_email).strip()
+    msg["Reply-To"] = FN_OUTREACH_SMTP_USER
+    msg["Subject"] = str(subject or "").strip()[:240]
+    msg["Date"] = formatdate(localtime=True)
+    msg["Message-ID"] = make_msgid(domain="franklinnavigator.com")
+    msg["X-Franklin-Message-Type"] = "transactional"
+    msg.set_content(str(plain_body or "").rstrip())
+    if html_body:
+        msg.add_alternative(str(html_body).rstrip(), subtype="html")
+    context = ssl.create_default_context()
+    with smtplib.SMTP_SSL(
+        FN_OUTREACH_SMTP_HOST,
+        FN_OUTREACH_SMTP_PORT,
+        context=context,
+        timeout=30,
+    ) as smtp:
+        smtp.login(FN_OUTREACH_SMTP_USER, FN_OUTREACH_SMTP_PASSWORD)
+        smtp.send_message(msg, to_addrs=[str(to_email).strip()])
+    return msg["Message-ID"]
 
 
 def send_owner_alert_smtp(subject: str, plain_body: str):
@@ -2384,6 +2413,41 @@ def startup():
         threading.Thread(target=seed_suppression_store_once, daemon=True).start()
 
 
+@app.post("/transactional/send")
+async def transactional_send(request: Request):
+    if not FN_TRANSACTIONAL_BRIDGE_SECRET:
+        raise HTTPException(status_code=503, detail="Transactional bridge is not configured")
+    supplied = str(request.headers.get("X-Franklin-Transactional-Secret") or "")
+    if not hmac.compare_digest(supplied, FN_TRANSACTIONAL_BRIDGE_SECRET):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    try:
+        payload = await request.json()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Invalid JSON") from exc
+    to_email = str(payload.get("to") or "").strip()
+    subject = str(payload.get("subject") or "").strip()
+    text_body = str(payload.get("text") or "").strip()
+    html_body = str(payload.get("html") or "").strip()
+    allowed_subjects = (
+        "Reset your Franklin Navigator password",
+        "Your Franklin Navigator profile access was approved",
+        "More information is needed for your Franklin Navigator profile request",
+        "Update on your Franklin Navigator profile-access request",
+        "Your Franklin Navigator profile access changed",
+    )
+    if subject not in allowed_subjects:
+        raise HTTPException(status_code=400, detail="Unsupported transactional subject")
+    if not text_body or len(text_body) > 30000 or len(html_body) > 60000:
+        raise HTTPException(status_code=400, detail="Invalid body")
+    message_id = send_franklin_transactional_smtp(to_email, subject, text_body, html_body)
+    print(
+        "SRE_BRIDGE TRANSACTIONAL_SENT "
+        + json.dumps({"messageId": message_id, "subject": subject, "at": now_iso()}, sort_keys=True),
+        flush=True,
+    )
+    return {"ok": True, "messageId": message_id}
+
+
 @app.post("/owner-alert/send")
 async def owner_alert_send(request: Request):
     if not FN_OWNER_ALERT_BRIDGE_SECRET:
@@ -2425,6 +2489,7 @@ def health():
         "rfc8058ScaleProof": RFC8058_SCALE_PROOF,
         "fnSmtpConfigured": bool(FN_OUTREACH_SMTP_PASSWORD),
         "ownerAlertBridgeConfigured": bool(FN_OWNER_ALERT_BRIDGE_SECRET),
+        "transactionalBridgeConfigured": bool(FN_TRANSACTIONAL_BRIDGE_SECRET),
         "fnUnsubscribeSigningConfigured": bool(FN_UNSUBSCRIBE_SIGNING_SECRET),
         "fnDirectDkimConfigured": bool(FN_OUTREACH_DKIM_PRIVATE_KEY_B64),
         "fnDirectOutreachEnabled": FN_DIRECT_OUTREACH_ENABLED,
