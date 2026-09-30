@@ -88,3 +88,14 @@ For the Franklin Navigator first-10 pilot, the owner explicitly authorized follo
 - Follow-up 2: wait 7 additional business days after the previous message and identify it as the final outreach note.
 
 No third follow-up is enabled for this pilot. Follow-ups must stop for that recipient after any reply, unsubscribe, bounce, spam complaint, factual-correction request, removal request, organization/domain hold or suppression, or other clear do-not-contact signal. A bounce or spam complaint during the low-volume pilot remains a global fail-closed review trigger. Open/click tracking remains off. The paused Mailshake campaign is not authorized to send these follow-ups; they belong to the qualified direct-Zoho path so RFC 8058 protections remain intact.
+
+
+## Exact-once and closed-cohort hardening — 2026-09-30
+
+The first-10 initial cohort is now **closed** after all 10 intended recipient identities were recorded as reached. Closing the cohort is a separate durable guard from the send ledger: a missing initial-send ledger record after closure causes a fail-closed hold rather than an automatic re-send. Reopening the initial cohort requires explicit owner approval.
+
+Direct outreach uses the dedicated Zoho IMAP mailbox **Franklin Navigator Outreach Ledger**, not Zoho Sent Mail, as the authoritative send ledger. Before a send, the bridge writes a deterministic RESERVED marker; after confirmed SMTP submission it writes SENT. Any RESERVED key without a corresponding SENT key is treated as an ambiguous-send condition and halts further automation for review rather than risking a duplicate.
+
+Daily caps and spacing are calculated from SENT records only; reservation markers never count as delivered messages. The source-controlled sequence is validated on every scan for the exact campaign identity, sender, owner BCC, America/Chicago weekday window, minimum 12-minute spacing, <=10 daily cap, and exactly three steps (initial + two approved follow-ups with 5/7 business-day waits). Configuration drift fails closed.
+
+The Little Hats Italian Market incident is recorded at the verified count of **five total copies of the initial message**. That recipient remains on a permanent no-further-follow-up incident hold for this pilot.
