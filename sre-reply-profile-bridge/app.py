@@ -44,6 +44,7 @@ FN_OUTREACH_SMTP_USER = os.environ.get("FN_OUTREACH_SMTP_USER", "community@frank
 FN_OUTREACH_SMTP_PASSWORD = os.environ.get("FN_OUTREACH_SMTP_PASSWORD", "").strip()
 FN_OUTREACH_PUBLIC_BASE_URL = os.environ.get("FN_OUTREACH_PUBLIC_BASE_URL", MAILSHAKE_PUBLIC_BASE_URL).rstrip("/")
 FN_OUTREACH_OWNER_TEST_EMAIL = os.environ.get("FN_OUTREACH_OWNER_TEST_EMAIL", "reachrgnow@gmail.com").strip()
+FN_OWNER_ALERT_BRIDGE_SECRET = os.environ.get("FN_OWNER_ALERT_BRIDGE_SECRET", "").strip()
 FN_OUTREACH_OWNER_TEST_ON_STARTUP = os.environ.get("FN_OUTREACH_OWNER_TEST_ON_STARTUP", "false").strip().lower() in {"1", "true", "yes"}
 FN_ONE_CLICK_SELF_TEST_ON_STARTUP = os.environ.get("FN_ONE_CLICK_SELF_TEST_ON_STARTUP", "false").strip().lower() in {"1", "true", "yes"}
 FN_OUTREACH_LIST_ID = "franklin-navigator-community-outreach.franklinnavigator.com"
@@ -524,6 +525,30 @@ def _direct_dkim_private_key():
         return base64.b64decode(FN_OUTREACH_DKIM_PRIVATE_KEY_B64)
     except Exception as exc:
         raise RuntimeError("FN_OUTREACH_DKIM_PRIVATE_KEY_B64 is invalid") from exc
+
+
+def send_owner_alert_smtp(subject: str, plain_body: str):
+    if not FN_OUTREACH_SMTP_PASSWORD:
+        raise RuntimeError("FN_OUTREACH_SMTP_PASSWORD is not configured")
+    msg = EmailMessage(policy=email_policy.SMTP)
+    msg["From"] = f"Franklin Navigator Owner Alerts <{FN_OUTREACH_SMTP_USER}>"
+    msg["To"] = FN_OUTREACH_OWNER_TEST_EMAIL
+    msg["Reply-To"] = FN_OUTREACH_SMTP_USER
+    msg["Subject"] = str(subject or "").strip()[:240]
+    msg["Date"] = formatdate(localtime=True)
+    msg["Message-ID"] = make_msgid(domain="franklinnavigator.com")
+    msg["X-Franklin-Message-Type"] = "owner-incident-alert"
+    msg.set_content(str(plain_body or "").rstrip())
+    context = ssl.create_default_context()
+    with smtplib.SMTP_SSL(
+        FN_OUTREACH_SMTP_HOST,
+        FN_OUTREACH_SMTP_PORT,
+        context=context,
+        timeout=30,
+    ) as smtp:
+        smtp.login(FN_OUTREACH_SMTP_USER, FN_OUTREACH_SMTP_PASSWORD)
+        smtp.send_message(msg, to_addrs=[FN_OUTREACH_OWNER_TEST_EMAIL])
+    return msg["Message-ID"]
 
 
 def send_franklin_smtp_message(to_email: str, subject: str, plain_body: str, html_body: str = "", bcc_email: str = "", outreach_key: str = ""):
@@ -2359,6 +2384,32 @@ def startup():
         threading.Thread(target=seed_suppression_store_once, daemon=True).start()
 
 
+@app.post("/owner-alert/send")
+async def owner_alert_send(request: Request):
+    if not FN_OWNER_ALERT_BRIDGE_SECRET:
+        raise HTTPException(status_code=503, detail="Owner alert bridge is not configured")
+    supplied = str(request.headers.get("X-Franklin-Owner-Alert-Secret") or "")
+    if not hmac.compare_digest(supplied, FN_OWNER_ALERT_BRIDGE_SECRET):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    try:
+        payload = await request.json()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Invalid JSON") from exc
+    subject = str(payload.get("subject") or "").strip()
+    body = str(payload.get("text") or "").strip()
+    if not subject.startswith("[Franklin Navigator] "):
+        raise HTTPException(status_code=400, detail="Invalid subject")
+    if not body or len(body) > 20000:
+        raise HTTPException(status_code=400, detail="Invalid body")
+    message_id = send_owner_alert_smtp(subject, body)
+    print(
+        "SRE_BRIDGE OWNER_ALERT_SENT "
+        + json.dumps({"messageId": message_id, "at": now_iso()}, sort_keys=True),
+        flush=True,
+    )
+    return {"ok": True, "messageId": message_id}
+
+
 @app.get("/health")
 def health():
     return {
@@ -2373,6 +2424,7 @@ def health():
         "mailshakeLastPollAt": _state["mailshake"].get("lastPollAt"),
         "rfc8058ScaleProof": RFC8058_SCALE_PROOF,
         "fnSmtpConfigured": bool(FN_OUTREACH_SMTP_PASSWORD),
+        "ownerAlertBridgeConfigured": bool(FN_OWNER_ALERT_BRIDGE_SECRET),
         "fnUnsubscribeSigningConfigured": bool(FN_UNSUBSCRIBE_SIGNING_SECRET),
         "fnDirectDkimConfigured": bool(FN_OUTREACH_DKIM_PRIVATE_KEY_B64),
         "fnDirectOutreachEnabled": FN_DIRECT_OUTREACH_ENABLED,
