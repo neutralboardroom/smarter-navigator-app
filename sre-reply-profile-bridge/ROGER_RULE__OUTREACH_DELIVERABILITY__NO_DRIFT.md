@@ -99,3 +99,22 @@ Direct outreach uses the dedicated Zoho IMAP mailbox **Franklin Navigator Outrea
 Daily caps and spacing are calculated from SENT records only; reservation markers never count as delivered messages. The source-controlled sequence is validated on every scan for the exact campaign identity, sender, owner BCC, America/Chicago weekday window, minimum 12-minute spacing, <=10 daily cap, and exactly three steps (initial + two approved follow-ups with 5/7 business-day waits). Configuration drift fails closed.
 
 The Little Hats Italian Market incident is recorded at the verified count of **five total copies of the initial message**. That recipient remains on a permanent no-further-follow-up incident hold for this pilot.
+
+
+## FN-SRE-BRIDGE-2.4.0 transport firewall — 2026-09-30
+
+Franklin Navigator promotional outreach remains direct Zoho only. Reply.io and Mailshake are now protected by a **runtime retirement firewall**: stale or accidental environment requests to re-enable either runtime are ignored. Reconnection requires an intentional future code change plus explicit owner authorization; an environment toggle alone cannot reactivate either provider.
+
+For every promotional send carrying an outreach key, the transport itself now enforces both of these conditions before SMTP submission:
+- the recipient must be one of the exact authorized first-10 roster addresses;
+- the owner BCC must be exactly `reachrgnow@gmail.com`.
+
+The transport adds DKIM-covered Franklin release and outreach-step audit headers. Follow-ups cannot become send-eligible unless the initial cohort is explicitly closed. The source-controlled sequence also fails closed if the approved subject lines or required free-claim, no-purchase-required, $35/year, free correction/removal, or commercial-outreach language drifts.
+
+The current authorized follow-up population is **9 recipients**. Little Hats Italian Market remains excluded from all follow-ups because of the initial-send duplicate incident.
+
+### Next Version Improvement List
+1. Observe the first eligible real follow-up and verify the owner BCC copy, authentication results, RFC 8058 headers, profile link, and exact copy before allowing the remainder to proceed normally.
+2. Continue reply/bounce/complaint/unsubscribe and organization/domain suppression monitoring throughout the waiting period.
+3. Keep cohort expansion and volume scaling locked pending a clean pilot and explicit owner approval.
+4. Consider physical removal of archived Reply.io/Mailshake implementation code only after confirming it is no longer needed for historical audit or recovery.
