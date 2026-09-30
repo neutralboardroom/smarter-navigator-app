@@ -2577,6 +2577,7 @@ async def owner_alert_send(request: Request):
 def health():
     return {
         "ok": True,
+        "release": SRE_BRIDGE_RELEASE,
         "apiKeyConfigured": bool(REPLY_API_KEY),
         "sequenceId": SEQUENCE_ID,
         "lastRunAt": _state["lastRunAt"],
