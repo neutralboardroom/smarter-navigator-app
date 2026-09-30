@@ -29,7 +29,16 @@
     "actual_initial_duplicate_incident_count": 5,
     "exact_once_ledger": "ZOHO_IMAP_OUTREACH_LEDGER",
     "ambiguous_reservation_fail_closed": true,
-    "sequence_configuration_fail_closed": true
+    "sequence_configuration_fail_closed": true,
+    "release": "FN-SRE-BRIDGE-2.4.0",
+    "legacy_provider_runtime_forbidden": true,
+    "reply_sync_enabled": false,
+    "authorized_followup_recipient_count": 9,
+    "transport_level_owner_bcc_enforcement": true,
+    "transport_level_roster_enforcement": true,
+    "followups_require_initial_cohort_closed": true,
+    "sequence_subjects_fail_closed": true,
+    "required_copy_fail_closed": true
   },
   "scale": {
     "automatic_scale_up": false,
@@ -96,6 +105,17 @@
     "direct_send_ledger": "ZOHO_IMAP_OUTREACH_LEDGER",
     "mailshake_runtime_required": false,
     "initial_cohort_reopen_requires_owner_approval": true,
-    "ambiguous_send_reservation_causes_hold": true
-  }
+    "ambiguous_send_reservation_causes_hold": true,
+    "legacy_provider_reactivation_via_environment_forbidden": true,
+    "direct_outreach_recipient_must_be_in_exact_authorized_roster": true,
+    "owner_bcc_required_at_transport_for_every_promotional_send": true,
+    "followup_requires_closed_initial_cohort": true,
+    "promotional_release_header_dkim_signed": true
+  },
+  "next_version_improvement_list": [
+    "Continue monitoring the first-10 cohort for replies, bounces, complaints, unsubscribes, and organization-wide do-not-contact signals before any follow-up sends.",
+    "Verify a real follow-up BCC copy and raw authentication/unsubscribe headers after the first eligible follow-up is sent.",
+    "Keep scale locked until the current cohort and approved follow-ups complete cleanly and the owner explicitly authorizes expansion.",
+    "Evaluate removing archived legacy Reply.io/Mailshake code only after confirming no recovery or audit dependency remains."
+  ]
 }
