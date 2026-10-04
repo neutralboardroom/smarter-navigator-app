@@ -67,34 +67,54 @@ def build_franklin_message_v251(to_email: str, subject: str, plain_body: str, ht
 
 
 def send_owner_sequence_preview_once():
-    """Send exactly one rendered initial-outreach preview to the owner only.
+    """Send one idempotent rendered initial-outreach preview to the owner only.
 
-    No outreach key is supplied, so the prospect-roster send path is never entered.
-    The first existing public Franklin profile is used only to render a realistic
-    greeting/profile link in the owner's private preview email.
+    No outreach key is supplied to SMTP, so the prospect-roster send path is never
+    entered. A durable Zoho ledger key prevents a service restart from sending the
+    same owner preview twice. A new FN_OUTREACH_OWNER_PREVIEW_ID can be supplied
+    later if a deliberate second preview is needed.
     """
     try:
-        if str(legacy.FN_OUTREACH_OWNER_TEST_EMAIL or "").strip().lower() != "reachrgnow@gmail.com":
+        owner_email = str(legacy.FN_OUTREACH_OWNER_TEST_EMAIL or "").strip().lower()
+        if owner_email != "reachrgnow@gmail.com":
             raise RuntimeError("OWNER_PREVIEW_RECIPIENT_DRIFT")
         sequence = legacy.load_direct_sequence()
         step = (sequence.get("steps") or [])[0]
         if str(step.get("id") or "") != "initial":
             raise RuntimeError("OWNER_PREVIEW_INITIAL_STEP_MISSING")
-        preview_recipient = dict(legacy.FIRST10_CONTACT_ROSTER[-1])
-        plain_body = legacy._render_direct_body(step.get("body") or "", preview_recipient)
-        html_body = legacy._render_direct_body(step.get("html_body") or "", preview_recipient)
-        message_id = legacy.send_franklin_smtp_message(
-            legacy.FN_OUTREACH_OWNER_TEST_EMAIL,
-            str(step.get("subject") or "").strip(),
-            plain_body,
-            html_body=html_body,
-        )
+        subject = str(step.get("subject") or "").strip()
+        preview_id = legacy.os.environ.get("FN_OUTREACH_OWNER_PREVIEW_ID", "v252-initial-owner-test-1").strip()
+        if not preview_id or len(preview_id) > 120:
+            raise RuntimeError("OWNER_PREVIEW_ID_INVALID")
+        ledger_key = "fn-owner-preview:" + preview_id
+
+        with legacy._imap_connect() as client:
+            if not legacy._ledger_reserve(client, ledger_key, owner_email, subject):
+                print(
+                    "SRE_BRIDGE OWNER_SEQUENCE_PREVIEW SKIPPED "
+                    + json.dumps({"to": owner_email, "previewId": preview_id, "reason": "ALREADY_RESERVED_OR_SENT"}, sort_keys=True),
+                    flush=True,
+                )
+                return None
+
+            preview_recipient = dict(legacy.FIRST10_CONTACT_ROSTER[-1])
+            plain_body = legacy._render_direct_body(step.get("body") or "", preview_recipient)
+            html_body = legacy._render_direct_body(step.get("html_body") or "", preview_recipient)
+            message_id = legacy.send_franklin_smtp_message(
+                owner_email,
+                subject,
+                plain_body,
+                html_body=html_body,
+            )
+            legacy._ledger_mark_sent(client, ledger_key, owner_email, subject, message_id)
+
         print(
             "SRE_BRIDGE OWNER_SEQUENCE_PREVIEW SENT "
             + json.dumps(
                 {
-                    "to": legacy.FN_OUTREACH_OWNER_TEST_EMAIL,
+                    "to": owner_email,
                     "step": "initial",
+                    "previewId": preview_id,
                     "messageId": message_id,
                     "prospectSend": False,
                 },
