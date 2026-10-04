@@ -34,6 +34,23 @@ class OutreachV251Tests(unittest.TestCase):
             self.assertIn(f"<strong>{visibility}</strong>", html_body, step["id"])
             self.assertLess(body.index(visibility), body.index("It also"), step["id"])
 
+    def test_new_paid_member_benefits_are_present_in_every_email(self):
+        path = Path(__file__).with_name("direct_outreach_sequence.json")
+        sequence = json.loads(path.read_text(encoding="utf-8"))
+        required_phrases = (
+            "business logo or profile image",
+            "coupons, specials, sales, and events",
+            "promotional flyers and coupon graphics",
+            "website/contact links",
+            "booking or quote links where available",
+        )
+        for step in sequence["steps"]:
+            body = step["body"]
+            html_body = step["html_body"]
+            for phrase in required_phrases:
+                self.assertIn(phrase, body, f"{step['id']} plain missing {phrase}")
+                self.assertIn(phrase, html_body, f"{step['id']} html missing {phrase}")
+
     def test_reengagement_uses_90_calendar_days_not_business_days(self):
         tz = ZoneInfo("America/Chicago")
         previous = datetime(2026, 1, 1, 18, 0, tzinfo=timezone.utc)
