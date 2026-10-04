@@ -11,7 +11,7 @@ os.environ.setdefault("FN_UNSUBSCRIBE_SIGNING_SECRET", "unit-test-secret-only")
 import app as candidate
 
 
-class OutreachV251Tests(unittest.TestCase):
+class OutreachV252Tests(unittest.TestCase):
     def test_four_step_sequence_validates(self):
         path = Path(__file__).with_name("direct_outreach_sequence.json")
         sequence = json.loads(path.read_text(encoding="utf-8"))
@@ -23,11 +23,34 @@ class OutreachV251Tests(unittest.TestCase):
         self.assertEqual(validated["steps"][3]["wait_calendar_days_after_previous"], 90)
         self.assertTrue(validated["stop_rules"]["no_automatic_recurring_reengagement"])
 
-    def test_production_entrypoint_activates_v251_release(self):
-        self.assertEqual(candidate.SRE_BRIDGE_RELEASE, "FN-SRE-BRIDGE-2.5.1-CANDIDATE")
+    def test_production_entrypoint_activates_v252_release(self):
+        self.assertEqual(candidate.SRE_BRIDGE_RELEASE, "FN-SRE-BRIDGE-2.5.2-CANDIDATE")
         self.assertIs(candidate.app, candidate.legacy.app)
         self.assertIs(candidate.legacy._direct_scan_once, __import__("app_v250")._direct_scan_once_v250)
         self.assertIs(candidate.legacy.build_franklin_message, __import__("app_v251").build_franklin_message_v251)
+
+    def test_outreach_copy_readiness_gate_forces_prospect_sending_off(self):
+        self.assertTrue(candidate.legacy.FN_DIRECT_OUTREACH_REQUESTED)
+        self.assertFalse(candidate.legacy.FN_OUTREACH_COPY_READY)
+        self.assertFalse(candidate.legacy.FN_DIRECT_OUTREACH_ENABLED)
+        self.assertFalse(candidate.legacy._state["directOutreach"]["enabled"])
+        self.assertTrue(candidate.legacy._state["directOutreach"]["requestedEnabled"])
+        self.assertFalse(candidate.legacy._state["directOutreach"]["outreachCopyReady"])
+
+    def test_owner_preview_uses_actual_initial_copy_and_owner_only_send_path(self):
+        with patch.object(candidate.legacy, "send_franklin_smtp_message", return_value="<owner-preview@test>") as send:
+            message_id = candidate.legacy.send_owner_rfc8058_test_once()
+        self.assertEqual(message_id, "<owner-preview@test>")
+        args, kwargs = send.call_args
+        self.assertEqual(args[0], "reachrgnow@gmail.com")
+        self.assertEqual(args[1], "Your Franklin Navigator business profile")
+        self.assertIn("Its main benefit is helping increase your visibility in the Franklin community.", args[2])
+        self.assertIn("business logo or profile image", args[2])
+        self.assertIn("coupons, specials, sales, and events", args[2])
+        self.assertIn("promotional flyers and coupon graphics", args[2])
+        self.assertIn("html_body", kwargs)
+        self.assertNotIn("outreach_key", kwargs)
+        self.assertNotIn("bcc_email", kwargs)
 
     def test_membership_visibility_is_primary_and_prominent_in_every_email(self):
         path = Path(__file__).with_name("direct_outreach_sequence.json")
