@@ -36,7 +36,8 @@ jobs:
       - name: Run no-send outreach regression tests
         env:
           FN_UNSUBSCRIBE_SIGNING_SECRET: unit-test-secret-only
-          FN_DIRECT_OUTREACH_ENABLED: 'false'
+          FN_DIRECT_OUTREACH_ENABLED: 'true'
+          FN_OUTREACH_COPY_READY: 'false'
           MAILSHAKE_RUNTIME_ENABLED: 'false'
           REPLY_SYNC_ENABLED: 'false'
         run: python -m unittest -v test_app_v250.py
