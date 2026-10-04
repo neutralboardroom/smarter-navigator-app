@@ -1,4 +1,4 @@
-"""Production entrypoint for the tested Franklin Navigator SRE outreach v2.5.1 layer.
+"""Production entrypoint for the tested Franklin Navigator SRE outreach v2.5 layer.
 
 The preserved pre-v2.5 runtime lives in app_legacy.py. The candidate modules patch
 that preserved runtime in place, then this entrypoint exposes the same FastAPI app.
@@ -18,6 +18,11 @@ try:
     _active = importlib.import_module("app_v251")
 finally:
     sys.modules["app"] = _entrypoint
+
+# Register the owner-controlled alternate-email suppression send/check harness only
+# after the tested v2.5 runtime has patched the legacy bridge. Its environment flags
+# default off, so importing it has no send side effect by itself.
+_suppression_test = importlib.import_module("suppression_test_tools")
 
 app = _legacy.app
 SRE_BRIDGE_RELEASE = _legacy.SRE_BRIDGE_RELEASE
