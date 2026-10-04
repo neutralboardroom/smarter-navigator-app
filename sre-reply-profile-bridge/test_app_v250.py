@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 
 os.environ.setdefault("FN_UNSUBSCRIBE_SIGNING_SECRET", "unit-test-secret-only")
 
-import app_v251 as candidate
+import app as candidate
 
 
 class OutreachV251Tests(unittest.TestCase):
@@ -22,6 +22,12 @@ class OutreachV251Tests(unittest.TestCase):
         )
         self.assertEqual(validated["steps"][3]["wait_calendar_days_after_previous"], 90)
         self.assertTrue(validated["stop_rules"]["no_automatic_recurring_reengagement"])
+
+    def test_production_entrypoint_activates_v251_release(self):
+        self.assertEqual(candidate.SRE_BRIDGE_RELEASE, "FN-SRE-BRIDGE-2.5.1-CANDIDATE")
+        self.assertIs(candidate.app, candidate.legacy.app)
+        self.assertIs(candidate.legacy._direct_scan_once, __import__("app_v250")._direct_scan_once_v250)
+        self.assertIs(candidate.legacy.build_franklin_message, __import__("app_v251").build_franklin_message_v251)
 
     def test_membership_visibility_is_primary_and_prominent_in_every_email(self):
         path = Path(__file__).with_name("direct_outreach_sequence.json")
