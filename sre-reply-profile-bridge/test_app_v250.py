@@ -23,6 +23,17 @@ class OutreachV251Tests(unittest.TestCase):
         self.assertEqual(validated["steps"][3]["wait_calendar_days_after_previous"], 90)
         self.assertTrue(validated["stop_rules"]["no_automatic_recurring_reengagement"])
 
+    def test_membership_visibility_is_primary_and_prominent_in_every_email(self):
+        path = Path(__file__).with_name("direct_outreach_sequence.json")
+        sequence = json.loads(path.read_text(encoding="utf-8"))
+        visibility = "Its main benefit is helping increase your visibility in the Franklin community."
+        for step in sequence["steps"]:
+            body = step["body"]
+            html_body = step["html_body"]
+            self.assertIn(visibility, body, step["id"])
+            self.assertIn(f"<strong>{visibility}</strong>", html_body, step["id"])
+            self.assertLess(body.index(visibility), body.index("It also"), step["id"])
+
     def test_reengagement_uses_90_calendar_days_not_business_days(self):
         tz = ZoneInfo("America/Chicago")
         previous = datetime(2026, 1, 1, 18, 0, tzinfo=timezone.utc)
