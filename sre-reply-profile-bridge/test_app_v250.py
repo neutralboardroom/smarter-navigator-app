@@ -38,7 +38,12 @@ class OutreachV252Tests(unittest.TestCase):
         self.assertFalse(candidate.legacy._state["directOutreach"]["outreachCopyReady"])
 
     def test_owner_preview_uses_actual_initial_copy_and_owner_only_send_path(self):
-        with patch.object(candidate.legacy, "send_franklin_smtp_message", return_value="<owner-preview@test>") as send:
+        fake_client = object()
+        with patch.object(candidate.legacy, "_imap_connect") as imap_connect, \
+             patch.object(candidate.legacy, "_ledger_reserve", return_value=True) as reserve, \
+             patch.object(candidate.legacy, "_ledger_mark_sent") as mark_sent, \
+             patch.object(candidate.legacy, "send_franklin_smtp_message", return_value="<owner-preview@test>") as send:
+            imap_connect.return_value.__enter__.return_value = fake_client
             message_id = candidate.legacy.send_owner_rfc8058_test_once()
         self.assertEqual(message_id, "<owner-preview@test>")
         args, kwargs = send.call_args
@@ -51,6 +56,28 @@ class OutreachV252Tests(unittest.TestCase):
         self.assertIn("html_body", kwargs)
         self.assertNotIn("outreach_key", kwargs)
         self.assertNotIn("bcc_email", kwargs)
+        reserve.assert_called_once()
+        reserve_args = reserve.call_args.args
+        self.assertIs(reserve_args[0], fake_client)
+        self.assertEqual(reserve_args[1], "fn-owner-preview:v252-initial-owner-test-1")
+        self.assertEqual(reserve_args[2], "reachrgnow@gmail.com")
+        mark_sent.assert_called_once_with(
+            fake_client,
+            "fn-owner-preview:v252-initial-owner-test-1",
+            "reachrgnow@gmail.com",
+            "Your Franklin Navigator business profile",
+            "<owner-preview@test>",
+        )
+
+    def test_owner_preview_is_idempotent_when_preview_key_already_exists(self):
+        fake_client = object()
+        with patch.object(candidate.legacy, "_imap_connect") as imap_connect, \
+             patch.object(candidate.legacy, "_ledger_reserve", return_value=False), \
+             patch.object(candidate.legacy, "send_franklin_smtp_message") as send:
+            imap_connect.return_value.__enter__.return_value = fake_client
+            message_id = candidate.legacy.send_owner_rfc8058_test_once()
+        self.assertIsNone(message_id)
+        send.assert_not_called()
 
     def test_membership_visibility_is_primary_and_prominent_in_every_email(self):
         path = Path(__file__).with_name("direct_outreach_sequence.json")
