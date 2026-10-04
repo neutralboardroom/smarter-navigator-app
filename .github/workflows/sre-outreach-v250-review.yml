@@ -1,0 +1,43 @@
+name: SRE Outreach v2.5 Review
+
+on:
+  pull_request:
+    branches:
+      - sre-reply-profile-bridge
+    paths:
+      - 'sre-reply-profile-bridge/app.py'
+      - 'sre-reply-profile-bridge/app_legacy.py'
+      - 'sre-reply-profile-bridge/app_v250.py'
+      - 'sre-reply-profile-bridge/app_v251.py'
+      - 'sre-reply-profile-bridge/direct_outreach_sequence.json'
+      - 'sre-reply-profile-bridge/test_app_v250.py'
+      - '.github/workflows/sre-outreach-v250-review.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  no-send-regression:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sre-reply-profile-bridge
+    steps:
+      - name: Checkout candidate
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install bridge requirements
+        run: python -m pip install --upgrade pip && pip install -r requirements.txt
+      - name: Compile production entrypoint and candidate layers
+        run: python -m py_compile app.py app_legacy.py app_v250.py app_v251.py
+      - name: Run no-send outreach regression tests
+        env:
+          FN_UNSUBSCRIBE_SIGNING_SECRET: unit-test-secret-only
+          FN_DIRECT_OUTREACH_ENABLED: 'true'
+          FN_OUTREACH_COPY_READY: 'false'
+          MAILSHAKE_RUNTIME_ENABLED: 'false'
+          REPLY_SYNC_ENABLED: 'false'
+        run: python -m unittest -v test_app_v250.py
