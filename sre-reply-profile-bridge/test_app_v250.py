@@ -8,10 +8,10 @@ from zoneinfo import ZoneInfo
 
 os.environ.setdefault("FN_UNSUBSCRIBE_SIGNING_SECRET", "unit-test-secret-only")
 
-import app_v250 as candidate
+import app_v251 as candidate
 
 
-class OutreachV250Tests(unittest.TestCase):
+class OutreachV251Tests(unittest.TestCase):
     def test_four_step_sequence_validates(self):
         path = Path(__file__).with_name("direct_outreach_sequence.json")
         sequence = json.loads(path.read_text(encoding="utf-8"))
@@ -56,6 +56,24 @@ class OutreachV250Tests(unittest.TestCase):
         self.assertIn("margin-bottom:24px", html)
         self.assertIn("List-Unsubscribe", msg)
         self.assertEqual(msg["List-Unsubscribe-Post"], "List-Unsubscribe=One-Click")
+
+    def test_rendered_email_has_one_outreach_disclosure_not_two(self):
+        path = Path(__file__).with_name("direct_outreach_sequence.json")
+        sequence = json.loads(path.read_text(encoding="utf-8"))
+        step = sequence["steps"][0]
+        plain_body = step["body"].replace("{{Outreach_Greeting}}", "Test Business").replace("{{Profile_URL}}", "https://franklinnavigator.com/profiles/test/")
+        html_body = step["html_body"].replace("{{Outreach_Greeting}}", "Test Business").replace("{{Profile_URL}}", "https://franklinnavigator.com/profiles/test/")
+        msg = candidate.build_franklin_message_v250("owner-test@example.com", step["subject"], plain_body, html_body)
+        rendered_plain = ""
+        rendered_html = ""
+        for part in msg.walk():
+            if part.get_content_type() == "text/plain":
+                rendered_plain = part.get_content().lower()
+            elif part.get_content_type() == "text/html":
+                rendered_html = part.get_content().lower()
+        phrase = "commercial community-outreach email from franklin navigator"
+        self.assertEqual(rendered_plain.count(phrase), 1)
+        self.assertEqual(rendered_html.count(phrase), 1)
 
     def test_unsubscribe_persists_to_zoho_suppression_contract(self):
         with patch.object(candidate.legacy, "_persist_zoho_suppression") as persist:
