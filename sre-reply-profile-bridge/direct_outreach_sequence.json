@@ -1,17 +1,11 @@
 {
   "schema": "sre.franklin.direct-outreach-sequence.v2",
   "campaign_id": "FN-FIRST10-2026-09",
-  "sender": "Franklin Navigator Community Team <community@franklinnavigator.com>",
+  "sender": "Roger Gillman at Franklin Navigator <community@franklinnavigator.com>",
   "owner_bcc": "reachrgnow@gmail.com",
   "timezone": "America/Chicago",
   "send_window": {
-    "weekdays": [
-      "MO",
-      "TU",
-      "WE",
-      "TH",
-      "FR"
-    ],
+    "weekdays": ["MO", "TU", "WE", "TH", "FR"],
     "start": "09:00",
     "end": "16:00",
     "minimum_minutes_between_sends": 12,
@@ -33,33 +27,33 @@
       "id": "initial",
       "type": "initial",
       "wait_business_days_after_previous": 0,
-      "subject": "Your Franklin Navigator business profile",
-      "body": "Hi {{Outreach_Greeting}},\n\nFranklin Navigator helps Franklin residents find and connect with local businesses and community resources.\n\nWe have a Franklin Navigator profile for your business:\nView or claim your Franklin Navigator profile: {{Profile_URL}}\n\nClaiming and managing your basic profile is free. No purchase is required.\n\nIf anything is wrong, you can request factual corrections or profile removal for free.\n\nCommunity Membership is optional at $35/year, renewing annually until canceled. Its main benefit is helping increase your visibility in the Franklin community.\n\nIt also lets you add or enhance your business logo or profile image, promote coupons, specials, sales, and events, upload promotional flyers and coupon graphics, and add richer business details, photos, website/contact links, and booking or quote links where available.\n\nQuestions? Reply to this email and we’ll be happy to help.\n\nThis is a commercial community-outreach email from Franklin Navigator.",
-      "html_body": "<p>Hi {{Outreach_Greeting}},</p><p>Franklin Navigator helps Franklin residents find and connect with local businesses and community resources.</p><p>We have a Franklin Navigator profile for your business:<br><strong><a href=\"{{Profile_URL}}\">View or claim your Franklin Navigator profile</a></strong></p><p>Claiming and managing your basic profile is free. <strong>No purchase is required.</strong></p><p>If anything is wrong, you can request factual corrections or profile removal for free.</p><p>Community Membership is optional at <strong>$35/year</strong>, renewing annually until canceled.</p><p><strong>Its main benefit is helping increase your visibility in the Franklin community.</strong></p><p>It also lets you add or enhance your business logo or profile image, promote coupons, specials, sales, and events, upload promotional flyers and coupon graphics, and add richer business details, photos, website/contact links, and booking or quote links where available.</p><p>Questions? Reply to this email and we’ll be happy to help.</p><p>This is a commercial community-outreach email from Franklin Navigator.</p>"
+      "subject": "Your Franklin Navigator profile",
+      "body": "Hi {{Outreach_Greeting}},\n\nI’m Roger Gillman with Franklin Navigator. We have a Franklin Navigator profile for your business so local residents can find and learn more about you.\n\nYou can take a look here:\n{{Profile_URL}}\n\nClaiming and managing your basic profile is free. No purchase is required.\n\nIf anything needs correcting, or you’d prefer the profile removed, just reply and I’ll help.\n\nWe also offer an optional paid Community Membership designed to help businesses get more visibility in the Franklin community, but there’s no obligation.\n\nThanks,\nRoger",
+      "html_body": "<p>Hi {{Outreach_Greeting}},</p><p>I’m Roger Gillman with Franklin Navigator. We have a Franklin Navigator profile for your business so local residents can find and learn more about you.</p><p>You can take a look here:<br><a href=\"{{Profile_URL}}\">{{Profile_URL}}</a></p><p>Claiming and managing your basic profile is free. No purchase is required.</p><p>If anything needs correcting, or you’d prefer the profile removed, just reply and I’ll help.</p><p>We also offer an optional paid Community Membership designed to help businesses get more visibility in the Franklin community, but there’s no obligation.</p><p>Thanks,<br>Roger</p>"
     },
     {
       "id": "followup_1",
       "type": "follow-up",
       "wait_business_days_after_previous": 5,
-      "subject": "A quick follow-up on your Franklin Navigator profile",
-      "body": "Hi {{Outreach_Greeting}},\n\nJust following up in case you missed the link to your Franklin Navigator business profile:\nView or claim your Franklin Navigator profile: {{Profile_URL}}\n\nThe basic profile is free to claim and manage. No purchase is required. Factual corrections and profile-removal requests are also free.\n\nCommunity Membership is optional at $35/year, renewing annually until canceled. Its main benefit is helping increase your visibility in the Franklin community.\n\nIt also lets you add or enhance your business logo or profile image, promote coupons, specials, sales, and events, upload promotional flyers and coupon graphics, and add richer business details, photos, website/contact links, and booking or quote links where available.\n\nQuestions? Reply to this email and we’ll be happy to help.\n\nThis is a commercial community-outreach email from Franklin Navigator.",
-      "html_body": "<p>Hi {{Outreach_Greeting}},</p><p>Just following up in case you missed the link to your Franklin Navigator business profile:</p><p><strong><a href=\"{{Profile_URL}}\">View or claim your Franklin Navigator profile</a></strong></p><p>The basic profile is free to claim and manage. <strong>No purchase is required.</strong> Factual corrections and profile-removal requests are also free.</p><p>Community Membership is optional at <strong>$35/year</strong>, renewing annually until canceled.</p><p><strong>Its main benefit is helping increase your visibility in the Franklin community.</strong></p><p>It also lets you add or enhance your business logo or profile image, promote coupons, specials, sales, and events, upload promotional flyers and coupon graphics, and add richer business details, photos, website/contact links, and booking or quote links where available.</p><p>Questions? Reply to this email and we’ll be happy to help.</p><p>This is a commercial community-outreach email from Franklin Navigator.</p>"
+      "subject": "Quick follow-up on your Franklin Navigator profile",
+      "body": "Hi {{Outreach_Greeting}},\n\nJust wanted to make sure you saw your Franklin Navigator profile:\n{{Profile_URL}}\n\nThe basic profile is free to claim and manage. If anything needs correcting, just reply and I’ll take care of it.\n\nIf you want more visibility in the Franklin community, we also have an optional paid Community Membership. No purchase is required to claim your basic profile.\n\nThanks,\nRoger",
+      "html_body": "<p>Hi {{Outreach_Greeting}},</p><p>Just wanted to make sure you saw your Franklin Navigator profile:<br><a href=\"{{Profile_URL}}\">{{Profile_URL}}</a></p><p>The basic profile is free to claim and manage. If anything needs correcting, just reply and I’ll take care of it.</p><p>If you want more visibility in the Franklin community, we also have an optional paid Community Membership. No purchase is required to claim your basic profile.</p><p>Thanks,<br>Roger</p>"
     },
     {
       "id": "followup_2",
       "type": "follow-up",
       "wait_business_days_after_previous": 7,
       "subject": "One more note about your Franklin Navigator profile",
-      "body": "Hi {{Outreach_Greeting}},\n\nOne more quick note for now about your Franklin Navigator business profile:\nView or claim your Franklin Navigator profile: {{Profile_URL}}\n\nYour basic profile is free to claim and manage. No purchase is required. Factual corrections and profile-removal requests are always free.\n\nCommunity Membership is optional at $35/year, renewing annually until canceled. Its main benefit is helping increase your visibility in the Franklin community.\n\nIt also lets you add or enhance your business logo or profile image, promote coupons, specials, sales, and events, upload promotional flyers and coupon graphics, and add richer business details, photos, website/contact links, and booking or quote links where available.\n\nWe’ll leave it there for now. If you have questions, just reply.\n\nThis is a commercial community-outreach email from Franklin Navigator.",
-      "html_body": "<p>Hi {{Outreach_Greeting}},</p><p>One more quick note for now about your Franklin Navigator business profile:</p><p><strong><a href=\"{{Profile_URL}}\">View or claim your Franklin Navigator profile</a></strong></p><p>Your basic profile is free to claim and manage. <strong>No purchase is required.</strong> Factual corrections and profile-removal requests are always free.</p><p>Community Membership is optional at <strong>$35/year</strong>, renewing annually until canceled.</p><p><strong>Its main benefit is helping increase your visibility in the Franklin community.</strong></p><p>It also lets you add or enhance your business logo or profile image, promote coupons, specials, sales, and events, upload promotional flyers and coupon graphics, and add richer business details, photos, website/contact links, and booking or quote links where available.</p><p>We’ll leave it there for now. If you have questions, just reply.</p><p>This is a commercial community-outreach email from Franklin Navigator.</p>"
+      "body": "Hi {{Outreach_Greeting}},\n\nOne last quick note for now about your Franklin Navigator profile:\n{{Profile_URL}}\n\nYour basic profile is free to claim and manage. If you want anything corrected or removed, just reply and I’ll help.\n\nOur optional paid Community Membership is there if you’d like more visibility in the Franklin community, but there’s no obligation.\n\nThanks,\nRoger",
+      "html_body": "<p>Hi {{Outreach_Greeting}},</p><p>One last quick note for now about your Franklin Navigator profile:<br><a href=\"{{Profile_URL}}\">{{Profile_URL}}</a></p><p>Your basic profile is free to claim and manage. If you want anything corrected or removed, just reply and I’ll help.</p><p>Our optional paid Community Membership is there if you’d like more visibility in the Franklin community, but there’s no obligation.</p><p>Thanks,<br>Roger</p>"
     },
     {
       "id": "reengagement_90d",
       "type": "re-engagement",
       "wait_calendar_days_after_previous": 90,
       "subject": "Checking in on your Franklin Navigator profile",
-      "body": "Hi {{Outreach_Greeting}},\n\nIt’s been a while, so we’re checking in once more about your Franklin Navigator business profile:\nView or claim your Franklin Navigator profile: {{Profile_URL}}\n\nYour basic profile is free to claim and manage. No purchase is required. Factual corrections and profile-removal requests are always free.\n\nCommunity Membership is optional at $35/year, renewing annually until canceled. Its main benefit is helping increase your visibility in the Franklin community.\n\nIt also lets you add or enhance your business logo or profile image, promote coupons, specials, sales, and events, upload promotional flyers and coupon graphics, and add richer business details, photos, website/contact links, and booking or quote links where available.\n\nIf you already claimed your profile, no action is needed. This is the last automatic message in this outreach sequence. If you ever need help, you can reply to this email.\n\nThis is a commercial community-outreach email from Franklin Navigator.",
-      "html_body": "<p>Hi {{Outreach_Greeting}},</p><p>It’s been a while, so we’re checking in once more about your Franklin Navigator business profile:</p><p><strong><a href=\"{{Profile_URL}}\">View or claim your Franklin Navigator profile</a></strong></p><p>Your basic profile is free to claim and manage. <strong>No purchase is required.</strong> Factual corrections and profile-removal requests are always free.</p><p>Community Membership is optional at <strong>$35/year</strong>, renewing annually until canceled.</p><p><strong>Its main benefit is helping increase your visibility in the Franklin community.</strong></p><p>It also lets you add or enhance your business logo or profile image, promote coupons, specials, sales, and events, upload promotional flyers and coupon graphics, and add richer business details, photos, website/contact links, and booking or quote links where available.</p><p>If you already claimed your profile, no action is needed. This is the last automatic message in this outreach sequence. If you ever need help, you can reply to this email.</p><p>This is a commercial community-outreach email from Franklin Navigator.</p>"
+      "body": "Hi {{Outreach_Greeting}},\n\nIt’s been a while, so I wanted to check in once more about your Franklin Navigator profile:\n{{Profile_URL}}\n\nIf you already claimed it, no action is needed. If anything needs correcting or you need help with the profile, just reply.\n\nIf you ever want more visibility in the Franklin community, our optional paid Community Membership is available too.\n\nThis is the last automatic email in this outreach sequence.\n\nThanks,\nRoger",
+      "html_body": "<p>Hi {{Outreach_Greeting}},</p><p>It’s been a while, so I wanted to check in once more about your Franklin Navigator profile:<br><a href=\"{{Profile_URL}}\">{{Profile_URL}}</a></p><p>If you already claimed it, no action is needed. If anything needs correcting or you need help with the profile, just reply.</p><p>If you ever want more visibility in the Franklin community, our optional paid Community Membership is available too.</p><p>This is the last automatic email in this outreach sequence.</p><p>Thanks,<br>Roger</p>"
     }
   ],
   "notes": [
@@ -67,10 +61,10 @@
     "There is no recurring 90-day loop.",
     "Follow-ups and re-engagement never send after a reply, unsubscribe, bounce, complaint, correction/removal request, organization/domain suppression, or other stop signal.",
     "The active sending path remains Zoho direct SMTP/IMAP. Legacy provider runtimes remain disabled.",
-    "Every step BCCs reachrgnow@gmail.com through owner_bcc when used in the authorized production path.",
-    "Every message must retain a visible, isolated unsubscribe link plus RFC 8058 one-click headers, and open/click tracking remains off.",
-    "Every Community Membership mention leads with the primary benefit of helping increase visibility in the Franklin community; this is phrased as a benefit, not a guaranteed result.",
-    "Prepared membership copy also mentions logo/profile-image enhancement, coupons/specials/sales/events, and promotional flyer/coupon uploads. Real prospect use remains fail-closed until Main/Local returns OUTREACH_COPY_READY = YES for those claims.",
-    "This branch changes copy/timing only; it does not authorize or activate prospect sending or a volume increase."
+    "Every authorized production message BCCs reachrgnow@gmail.com through owner_bcc.",
+    "Every message retains a visible isolated unsubscribe link plus RFC 8058 one-click headers, and open/click tracking remains off.",
+    "The outreach sequence intentionally stays short and human. It describes Community Membership only as optional paid membership designed to help increase local visibility; detailed paid-feature selling belongs on the verified product pages rather than in the cold-email sequence.",
+    "No message guarantees traffic, ranking, leads, customers, sales, revenue, attendance, or any other business outcome.",
+    "This copy update does not by itself authorize prospect sending or a volume increase."
   ]
 }

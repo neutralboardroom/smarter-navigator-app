@@ -9,24 +9,19 @@ import sys
 
 import app_legacy as _legacy
 
-# app_v250 was intentionally written against module name `app`. During activation,
-# make that import resolve to the preserved runtime so every monkey-patch lands on
-# the real FastAPI runtime rather than on this thin entrypoint.
 _entrypoint = sys.modules[__name__]
 sys.modules["app"] = _legacy
 try:
-    _active = importlib.import_module("app_v251")
+    _active = importlib.import_module("app_v252")
 finally:
     sys.modules["app"] = _entrypoint
 
-# Register the owner-controlled alternate-email suppression send/check harness only
-# after the tested v2.5 runtime has patched the legacy bridge. Its environment flags
-# default off, so importing it has no send side effect by itself.
+# Owner-controlled alternate-email suppression tooling remains imported with all
+# action flags defaulting off. It is not part of normal prospect outreach.
 _suppression_test = importlib.import_module("suppression_test_tools")
 
-# Replace only the visible human unsubscribe confirmation/success routes. The RFC
-# 8058 one-click POST endpoint remains untouched, and a normal GET still cannot
-# create a suppression marker.
+# Keep the scanner-safe visible unsubscribe confirmation/success UI. RFC 8058
+# one-click POST remains separate and unchanged.
 _unsubscribe_ui = importlib.import_module("unsubscribe_ui")
 
 app = _legacy.app
