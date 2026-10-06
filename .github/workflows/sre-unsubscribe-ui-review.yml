@@ -1,0 +1,40 @@
+name: SRE Unsubscribe UI Review
+
+on:
+  pull_request:
+    branches:
+      - sre-reply-profile-bridge
+    paths:
+      - 'sre-reply-profile-bridge/app.py'
+      - 'sre-reply-profile-bridge/unsubscribe_ui.py'
+      - 'sre-reply-profile-bridge/test_unsubscribe_ui.py'
+      - '.github/workflows/sre-unsubscribe-ui-review.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  scanner-safe-unsubscribe:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sre-reply-profile-bridge
+    steps:
+      - name: Checkout candidate
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install bridge requirements
+        run: python -m pip install --upgrade pip && pip install -r requirements.txt
+      - name: Compile unsubscribe UI
+        run: python -m py_compile app.py unsubscribe_ui.py test_unsubscribe_ui.py
+      - name: Run unsubscribe UI regression tests
+        env:
+          FN_UNSUBSCRIBE_SIGNING_SECRET: unit-test-secret-only
+          FN_DIRECT_OUTREACH_ENABLED: 'false'
+          FN_OUTREACH_COPY_READY: 'false'
+          MAILSHAKE_RUNTIME_ENABLED: 'false'
+          REPLY_SYNC_ENABLED: 'false'
+        run: python -m unittest -v test_unsubscribe_ui.py
