@@ -3,13 +3,10 @@ import json
 import app_v250 as base
 
 legacy = base.legacy
-SRE_BRIDGE_RELEASE = "FN-SRE-BRIDGE-2.5.3-CANDIDATE"
+SRE_BRIDGE_RELEASE = "FN-SRE-BRIDGE-2.5.4-CANDIDATE"
 legacy.SRE_BRIDGE_RELEASE = SRE_BRIDGE_RELEASE
 
-# Fail closed on real prospect sending until the Main/Local product has explicitly
-# qualified the new paid-member benefit claims for outreach use. Even if Render's
-# older FN_DIRECT_OUTREACH_ENABLED switch remains true, prospect sending stays off
-# unless this second readiness gate is also true.
+# Fail closed on real prospect sending until the current point-of-send gates pass.
 FN_OUTREACH_COPY_READY = legacy.os.environ.get("FN_OUTREACH_COPY_READY", "false").strip().lower() in {"1", "true", "yes"}
 legacy.FN_OUTREACH_COPY_READY = FN_OUTREACH_COPY_READY
 legacy.FN_DIRECT_OUTREACH_REQUESTED = bool(legacy.FN_DIRECT_OUTREACH_ENABLED)
@@ -22,12 +19,7 @@ legacy._state.setdefault("directOutreach", {}).update({
 
 
 def _simplify_outreach_html(html_body: str) -> str:
-    """Keep the approved wording while making the message look like a simple note.
-
-    Preserve the intentionally emphasized local-visibility sentence, but remove
-    decorative bolding around ordinary price/free/link copy. No tracking or hidden
-    markup is added.
-    """
+    """Keep outreach HTML intentionally simple and human-looking."""
     value = str(html_body or "").rstrip()
     value = value.replace('<strong><a href=', '<a href=')
     value = value.replace('</a></strong>', '</a>')
@@ -41,27 +33,25 @@ def build_franklin_message_v251(to_email: str, subject: str, plain_body: str, ht
     one_click_url = f"{legacy.FN_OUTREACH_PUBLIC_BASE_URL}/unsubscribe/one-click/{token}"
     visible_url = f"{legacy.FN_OUTREACH_PUBLIC_BASE_URL}/unsubscribe/{token}"
     msg = legacy.EmailMessage(policy=legacy.email_policy.SMTP.clone(max_line_length=998))
-    msg["From"] = f"Franklin Navigator Community Team <{legacy.FN_OUTREACH_SMTP_USER}>"
+    msg["From"] = f"Roger Gillman at Franklin Navigator <{legacy.FN_OUTREACH_SMTP_USER}>"
     msg["To"] = to_email
     msg["Reply-To"] = legacy.FN_OUTREACH_SMTP_USER
     msg["Subject"] = subject
     msg["Date"] = legacy.formatdate(localtime=True)
     msg["Message-ID"] = legacy.make_msgid(domain="franklinnavigator.com")
 
-    # These are individual one-to-one business outreach messages, not a newsletter.
-    # Keep the standards-based unsubscribe headers that protect recipients, but do
-    # not add newsletter/list classification headers that are unnecessary here.
+    # Keep provider-compatible RFC 8058 one-click unsubscribe support while the
+    # visible human link retains the scanner-safe confirmation step.
     msg["List-Unsubscribe"] = f"<{one_click_url}>"
     msg["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click"
 
-    # The body already contains the required commercial-outreach disclosure.
-    # Do not repeat it in the signature/footer.
     footer_text = (
-        "\n\nFranklin Navigator Community Team\n"
+        "\n\nRoger Gillman\n"
         "Franklin Navigator\n"
         "community@franklinnavigator.com\n"
         "(615) 656-7020\n"
         "franklinnavigator.com\n\n"
+        "Franklin Navigator business outreach. Optional paid membership available.\n\n"
         f"UNSUBSCRIBE: {visible_url}\n\n"
         "2020 Fieldstone Pkwy, Ste 900, Franklin, TN 37069"
     )
@@ -69,11 +59,12 @@ def build_franklin_message_v251(to_email: str, subject: str, plain_body: str, ht
 
     if html_body:
         footer_html = (
-            '<div style="margin-top:20px;">Franklin Navigator Community Team<br>'
+            '<div style="margin-top:20px;">Roger Gillman<br>'
             'Franklin Navigator<br>'
             'community@franklinnavigator.com<br>'
             '(615) 656-7020<br>'
             'franklinnavigator.com</div>'
+            '<div style="margin-top:18px;">Franklin Navigator business outreach. Optional paid membership available.</div>'
             '<div style="margin-top:24px;margin-bottom:24px;line-height:1.5;">'
             f'<a href="{visible_url}" style="font-size:16px;font-weight:700;">Unsubscribe</a>'
             '</div>'
@@ -84,13 +75,7 @@ def build_franklin_message_v251(to_email: str, subject: str, plain_body: str, ht
 
 
 def send_owner_sequence_preview_once():
-    """Send one idempotent rendered initial-outreach preview to the owner only.
-
-    No outreach key is supplied to SMTP, so the prospect-roster send path is never
-    entered. A durable Zoho ledger key prevents a service restart from sending the
-    same owner preview twice. A new FN_OUTREACH_OWNER_PREVIEW_ID can be supplied
-    later if a deliberate second preview is needed.
-    """
+    """Send one idempotent rendered initial-outreach preview to the owner only."""
     try:
         owner_email = str(legacy.FN_OUTREACH_OWNER_TEST_EMAIL or "").strip().lower()
         if owner_email != "reachrgnow@gmail.com":
@@ -100,7 +85,7 @@ def send_owner_sequence_preview_once():
         if str(step.get("id") or "") != "initial":
             raise RuntimeError("OWNER_PREVIEW_INITIAL_STEP_MISSING")
         subject = str(step.get("subject") or "").strip()
-        preview_id = legacy.os.environ.get("FN_OUTREACH_OWNER_PREVIEW_ID", "v253-initial-owner-test-1").strip()
+        preview_id = legacy.os.environ.get("FN_OUTREACH_OWNER_PREVIEW_ID", "v254-human-first-owner-test-1").strip()
         if not preview_id or len(preview_id) > 120:
             raise RuntimeError("OWNER_PREVIEW_ID_INVALID")
         ledger_key = "fn-owner-preview:" + preview_id
@@ -115,6 +100,7 @@ def send_owner_sequence_preview_once():
                 return None
 
             preview_recipient = dict(legacy.FIRST10_CONTACT_ROSTER[-1])
+            preview_recipient["outreachGreeting"] = "Roger"
             plain_body = legacy._render_direct_body(step.get("body") or "", preview_recipient)
             html_body = legacy._render_direct_body(step.get("html_body") or "", preview_recipient)
             message_id = legacy.send_franklin_smtp_message(
@@ -146,11 +132,8 @@ def send_owner_sequence_preview_once():
 
 
 legacy.build_franklin_message = build_franklin_message_v251
-# Reuse the existing startup-only owner-test switch, but make it send the actual
-# current initial outreach email rather than the old generic RFC8058 test body.
 legacy.send_owner_rfc8058_test_once = send_owner_sequence_preview_once
 
-# Re-export tested candidate helpers for a single review/test surface.
 _validate_direct_sequence_v250 = base._validate_direct_sequence_v250
 _step_due = base._step_due
 _recipient_is_suppressed = base._recipient_is_suppressed
