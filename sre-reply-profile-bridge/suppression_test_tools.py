@@ -44,6 +44,10 @@ def _test_state() -> dict:
     safety_state = legacy.load_org_safety_state()
     domain = legacy.email_domain(email_addr)
     domain_suppressed = domain in legacy._zoho_domain_suppression_set()
+    domain_holds = safety_state.get("domain_holds") or {}
+    domain_suppressions = safety_state.get("domain_suppressions") or {}
+    org_domain_hold = domain in domain_holds
+    org_domain_suppression = domain in domain_suppressions
     blocked = candidate._recipient_is_suppressed(
         email_addr,
         domain,
@@ -55,6 +59,8 @@ def _test_state() -> dict:
         "email": email_addr,
         "suppressed": email_addr in suppressed_set,
         "domainSuppressed": domain_suppressed,
+        "orgDomainHold": org_domain_hold,
+        "orgDomainSuppression": org_domain_suppression,
         "senderWouldBlock": bool(blocked),
     }
 
@@ -115,8 +121,6 @@ def send_suppression_test_preview_once():
                 )
                 return None
 
-            # Keep a valid public Franklin profile URL for the exact email template,
-            # but make the greeting unmistakably owner-directed during testing.
             preview_recipient = dict(legacy.FIRST10_CONTACT_ROSTER[-1])
             preview_recipient["outreachGreeting"] = "Roger"
             if SUPPRESSION_TEST_LEAN_COPY:
@@ -172,9 +176,10 @@ def restore_suppression_test_address_once():
     try:
         email_addr = _test_email()
         before = _test_state()
-        if before.get("domainSuppressed"):
+        if before.get("domainSuppressed") or before.get("orgDomainHold") or before.get("orgDomainSuppression"):
             raise RuntimeError("SUPPRESSION_TEST_DOMAIN_BLOCKED_RESTORE_REFUSED")
         deleted = 0
+        remaining_marker_ids = []
         with legacy._imap_connect() as client:
             legacy._ensure_suppression_mailbox(client)
             status, _ = client.select(f'"{legacy.FN_SUPPRESSION_MAILBOX}"', readonly=False)
@@ -202,24 +207,32 @@ def restore_suppression_test_address_once():
                 marker_email = str(msg.get("X-Franklin-Suppression-Email") or "").strip().lower()
                 if marker_email != email_addr:
                     continue
-                store_status, _ = client.store(msg_id, "+FLAGS", "\\Deleted")
+                store_status, _ = client.store(msg_id, "+FLAGS.SILENT", "(\\Deleted)")
                 if store_status == "OK":
                     deleted += 1
             if deleted:
-                client.expunge()
+                expunge_status, _ = client.expunge()
+                if expunge_status != "OK":
+                    raise RuntimeError("SUPPRESSION_TEST_RESTORE_EXPUNGE_FAILED")
+
+            status3, data3 = client.search(None, "HEADER", "X-Franklin-Suppression-Email", email_addr)
+            if status3 != "OK":
+                raise RuntimeError("SUPPRESSION_TEST_RESTORE_VERIFY_SEARCH_FAILED")
+            remaining_marker_ids = [x.decode("ascii", "ignore") for x in (data3[0] or b"").split() if x]
 
         after = _test_state()
-        if after.get("suppressed") or after.get("senderWouldBlock"):
-            raise RuntimeError("SUPPRESSION_TEST_RESTORE_DID_NOT_CLEAR_BLOCK")
-        result = {
+        diagnostics = {
             "email": email_addr,
             "deletedMarkers": deleted,
+            "remainingMarkerIds": remaining_marker_ids,
             "before": before,
             "after": after,
             "testOnlyRestore": True,
         }
-        print("SRE_BRIDGE SUPPRESSION_TEST_RESTORE " + json.dumps(result, sort_keys=True), flush=True)
-        return result
+        if remaining_marker_ids or after.get("suppressed") or after.get("senderWouldBlock"):
+            raise RuntimeError("SUPPRESSION_TEST_RESTORE_DID_NOT_CLEAR_BLOCK " + json.dumps(diagnostics, sort_keys=True))
+        print("SRE_BRIDGE SUPPRESSION_TEST_RESTORE " + json.dumps(diagnostics, sort_keys=True), flush=True)
+        return diagnostics
     except Exception as exc:
         print(f"SRE_BRIDGE SUPPRESSION_TEST_RESTORE ERROR {exc}", flush=True)
         return None
