@@ -24,6 +24,11 @@ finally:
 # default off, so importing it has no send side effect by itself.
 _suppression_test = importlib.import_module("suppression_test_tools")
 
+# Replace only the visible human unsubscribe confirmation/success routes. The RFC
+# 8058 one-click POST endpoint remains untouched, and a normal GET still cannot
+# create a suppression marker.
+_unsubscribe_ui = importlib.import_module("unsubscribe_ui")
+
 app = _legacy.app
 SRE_BRIDGE_RELEASE = _legacy.SRE_BRIDGE_RELEASE
 legacy = _legacy
