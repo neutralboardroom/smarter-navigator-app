@@ -29,7 +29,7 @@ def _simplify_outreach_html(html_body: str) -> str:
     markup is added.
     """
     value = str(html_body or "").rstrip()
-    value = value.replace('<strong><a href="{{Profile_URL}}">', '<a href="{{Profile_URL}}">')
+    value = value.replace('<strong><a href=', '<a href=')
     value = value.replace('</a></strong>', '</a>')
     value = value.replace('<strong>No purchase is required.</strong>', 'No purchase is required.')
     value = value.replace('<strong>$35/year</strong>', '$35/year')
