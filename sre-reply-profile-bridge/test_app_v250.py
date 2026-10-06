@@ -11,7 +11,7 @@ os.environ.setdefault("FN_UNSUBSCRIBE_SIGNING_SECRET", "unit-test-secret-only")
 import app as candidate
 
 
-class OutreachV252Tests(unittest.TestCase):
+class OutreachV253Tests(unittest.TestCase):
     def test_four_step_sequence_validates(self):
         path = Path(__file__).with_name("direct_outreach_sequence.json")
         sequence = json.loads(path.read_text(encoding="utf-8"))
@@ -23,8 +23,8 @@ class OutreachV252Tests(unittest.TestCase):
         self.assertEqual(validated["steps"][3]["wait_calendar_days_after_previous"], 90)
         self.assertTrue(validated["stop_rules"]["no_automatic_recurring_reengagement"])
 
-    def test_production_entrypoint_activates_v252_release(self):
-        self.assertEqual(candidate.SRE_BRIDGE_RELEASE, "FN-SRE-BRIDGE-2.5.2-CANDIDATE")
+    def test_production_entrypoint_activates_v253_release(self):
+        self.assertEqual(candidate.SRE_BRIDGE_RELEASE, "FN-SRE-BRIDGE-2.5.3-CANDIDATE")
         self.assertIs(candidate.app, candidate.legacy.app)
         self.assertIs(candidate.legacy._direct_scan_once, __import__("app_v250")._direct_scan_once_v250)
         self.assertIs(candidate.legacy.build_franklin_message, __import__("app_v251").build_franklin_message_v251)
@@ -59,11 +59,11 @@ class OutreachV252Tests(unittest.TestCase):
         reserve.assert_called_once()
         reserve_args = reserve.call_args.args
         self.assertIs(reserve_args[0], fake_client)
-        self.assertEqual(reserve_args[1], "fn-owner-preview:v252-initial-owner-test-1")
+        self.assertEqual(reserve_args[1], "fn-owner-preview:v253-initial-owner-test-1")
         self.assertEqual(reserve_args[2], "reachrgnow@gmail.com")
         mark_sent.assert_called_once_with(
             fake_client,
-            "fn-owner-preview:v252-initial-owner-test-1",
+            "fn-owner-preview:v253-initial-owner-test-1",
             "reachrgnow@gmail.com",
             "Your Franklin Navigator business profile",
             "<owner-preview@test>",
@@ -140,6 +140,33 @@ class OutreachV252Tests(unittest.TestCase):
         self.assertIn("margin-bottom:24px", html)
         self.assertIn("List-Unsubscribe", msg)
         self.assertEqual(msg["List-Unsubscribe-Post"], "List-Unsubscribe=One-Click")
+
+    def test_individual_outreach_omits_unnecessary_newsletter_headers(self):
+        msg = candidate.build_franklin_message_v250(
+            "owner-test@example.com",
+            "Test",
+            "Plain body",
+            "<p>HTML body</p>",
+        )
+        self.assertNotIn("List-ID", msg)
+        self.assertNotIn("Feedback-ID", msg)
+        self.assertIn("List-Unsubscribe", msg)
+        self.assertIn("List-Unsubscribe-Post", msg)
+
+    def test_html_is_simple_but_keeps_primary_visibility_emphasis(self):
+        path = Path(__file__).with_name("direct_outreach_sequence.json")
+        sequence = json.loads(path.read_text(encoding="utf-8"))
+        step = sequence["steps"][0]
+        html_body = step["html_body"].replace("{{Outreach_Greeting}}", "Roger").replace("{{Profile_URL}}", "https://franklinnavigator.com/profiles/test/")
+        msg = candidate.build_franklin_message_v250("owner-test@example.com", step["subject"], "Plain", html_body)
+        rendered_html = ""
+        for part in msg.walk():
+            if part.get_content_type() == "text/html":
+                rendered_html = part.get_content()
+        self.assertNotIn("<strong><a", rendered_html)
+        self.assertNotIn("<strong>No purchase is required.</strong>", rendered_html)
+        self.assertNotIn("<strong>$35/year</strong>", rendered_html)
+        self.assertIn("<strong>Its main benefit is helping increase your visibility in the Franklin community.</strong>", rendered_html)
 
     def test_rendered_email_has_one_outreach_disclosure_not_two(self):
         path = Path(__file__).with_name("direct_outreach_sequence.json")

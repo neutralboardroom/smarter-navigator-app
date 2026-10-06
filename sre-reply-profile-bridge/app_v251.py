@@ -3,7 +3,7 @@ import json
 import app_v250 as base
 
 legacy = base.legacy
-SRE_BRIDGE_RELEASE = "FN-SRE-BRIDGE-2.5.2-CANDIDATE"
+SRE_BRIDGE_RELEASE = "FN-SRE-BRIDGE-2.5.3-CANDIDATE"
 legacy.SRE_BRIDGE_RELEASE = SRE_BRIDGE_RELEASE
 
 # Fail closed on real prospect sending until the Main/Local product has explicitly
@@ -21,6 +21,21 @@ legacy._state.setdefault("directOutreach", {}).update({
 })
 
 
+def _simplify_outreach_html(html_body: str) -> str:
+    """Keep the approved wording while making the message look like a simple note.
+
+    Preserve the intentionally emphasized local-visibility sentence, but remove
+    decorative bolding around ordinary price/free/link copy. No tracking or hidden
+    markup is added.
+    """
+    value = str(html_body or "").rstrip()
+    value = value.replace('<strong><a href=', '<a href=')
+    value = value.replace('</a></strong>', '</a>')
+    value = value.replace('<strong>No purchase is required.</strong>', 'No purchase is required.')
+    value = value.replace('<strong>$35/year</strong>', '$35/year')
+    return value
+
+
 def build_franklin_message_v251(to_email: str, subject: str, plain_body: str, html_body: str = ""):
     token = legacy.make_unsubscribe_token(to_email)
     one_click_url = f"{legacy.FN_OUTREACH_PUBLIC_BASE_URL}/unsubscribe/one-click/{token}"
@@ -32,10 +47,12 @@ def build_franklin_message_v251(to_email: str, subject: str, plain_body: str, ht
     msg["Subject"] = subject
     msg["Date"] = legacy.formatdate(localtime=True)
     msg["Message-ID"] = legacy.make_msgid(domain="franklinnavigator.com")
-    msg["List-ID"] = f"<{legacy.FN_OUTREACH_LIST_ID}>"
+
+    # These are individual one-to-one business outreach messages, not a newsletter.
+    # Keep the standards-based unsubscribe headers that protect recipients, but do
+    # not add newsletter/list classification headers that are unnecessary here.
     msg["List-Unsubscribe"] = f"<{one_click_url}>"
     msg["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click"
-    msg["Feedback-ID"] = f"first10:profile:outreach:{legacy.FN_FEEDBACK_SENDER_ID}"
 
     # The body already contains the required commercial-outreach disclosure.
     # Do not repeat it in the signature/footer.
@@ -62,7 +79,7 @@ def build_franklin_message_v251(to_email: str, subject: str, plain_body: str, ht
             '</div>'
             '<div>2020 Fieldstone Pkwy, Ste 900, Franklin, TN 37069</div>'
         )
-        msg.add_alternative(str(html_body).rstrip() + footer_html, subtype="html")
+        msg.add_alternative(_simplify_outreach_html(html_body) + footer_html, subtype="html")
     return msg
 
 
@@ -83,7 +100,7 @@ def send_owner_sequence_preview_once():
         if str(step.get("id") or "") != "initial":
             raise RuntimeError("OWNER_PREVIEW_INITIAL_STEP_MISSING")
         subject = str(step.get("subject") or "").strip()
-        preview_id = legacy.os.environ.get("FN_OUTREACH_OWNER_PREVIEW_ID", "v252-initial-owner-test-1").strip()
+        preview_id = legacy.os.environ.get("FN_OUTREACH_OWNER_PREVIEW_ID", "v253-initial-owner-test-1").strip()
         if not preview_id or len(preview_id) > 120:
             raise RuntimeError("OWNER_PREVIEW_ID_INVALID")
         ledger_key = "fn-owner-preview:" + preview_id
