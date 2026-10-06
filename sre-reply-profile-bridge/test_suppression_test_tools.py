@@ -57,21 +57,29 @@ class SuppressionTestHarnessTests(unittest.TestCase):
     def test_restore_deletes_only_exact_allowlisted_suppression_markers(self):
         client = MagicMock()
         client.select.return_value = ("OK", [b""])
-        client.search.return_value = ("OK", [b"1 2"])
+        client.search.side_effect = [
+            ("OK", [b"1 2"]),
+            ("OK", [b""]),
+        ]
         marker = b"X-Franklin-Suppression-Email: reachrgnow1@gmail.com\r\n\r\n"
         client.fetch.return_value = ("OK", [(b"header", marker)])
         client.store.return_value = ("OK", [b""])
+        client.expunge.return_value = ("OK", [b"1", b"2"])
 
         before = {
             "email": "reachrgnow1@gmail.com",
             "suppressed": True,
             "domainSuppressed": False,
+            "orgDomainHold": False,
+            "orgDomainSuppression": False,
             "senderWouldBlock": True,
         }
         after = {
             "email": "reachrgnow1@gmail.com",
             "suppressed": False,
             "domainSuppressed": False,
+            "orgDomainHold": False,
+            "orgDomainSuppression": False,
             "senderWouldBlock": False,
         }
         with patch.object(tools, "_test_state", side_effect=[before, after]), \
@@ -82,14 +90,21 @@ class SuppressionTestHarnessTests(unittest.TestCase):
 
         self.assertEqual(result["email"], "reachrgnow1@gmail.com")
         self.assertEqual(result["deletedMarkers"], 2)
+        self.assertEqual(result["remainingMarkerIds"], [])
         self.assertTrue(result["testOnlyRestore"])
-        client.search.assert_called_once_with(
+        expected_search = (
             None,
             "HEADER",
             "X-Franklin-Suppression-Email",
             "reachrgnow1@gmail.com",
         )
+        self.assertEqual(client.search.call_count, 2)
+        self.assertEqual(client.search.call_args_list[0].args, expected_search)
+        self.assertEqual(client.search.call_args_list[1].args, expected_search)
         self.assertEqual(client.store.call_count, 2)
+        for call in client.store.call_args_list:
+            self.assertEqual(call.args[1], "+FLAGS.SILENT")
+            self.assertEqual(call.args[2], "(\\Deleted)")
         client.expunge.assert_called_once()
 
     def test_restore_refuses_domain_suppression(self):
@@ -100,6 +115,8 @@ class SuppressionTestHarnessTests(unittest.TestCase):
                 "email": "reachrgnow1@gmail.com",
                 "suppressed": True,
                 "domainSuppressed": True,
+                "orgDomainHold": False,
+                "orgDomainSuppression": False,
                 "senderWouldBlock": True,
             },
         ), patch.object(tools.legacy, "_imap_connect") as imap_connect:
