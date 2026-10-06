@@ -79,7 +79,10 @@ def send_suppression_test_preview_once():
                 )
                 return None
 
+            # Keep a valid public Franklin profile URL for the exact email template,
+            # but make the greeting unmistakably owner-directed during testing.
             preview_recipient = dict(legacy.FIRST10_CONTACT_ROSTER[-1])
+            preview_recipient["outreachGreeting"] = "Roger"
             plain_body = legacy._render_direct_body(step.get("body") or "", preview_recipient)
             html_body = legacy._render_direct_body(step.get("html_body") or "", preview_recipient)
             message_id = legacy.send_franklin_smtp_message(
