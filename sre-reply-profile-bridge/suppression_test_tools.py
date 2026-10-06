@@ -1,7 +1,9 @@
 """Owner-controlled end-to-end unsubscribe/suppression test harness.
 
 Restricted to reachrgnow1@gmail.com. This module never changes Franklin Navigator's
-normal owner-alert recipient and does not provide a general unsuppress action.
+normal owner-alert recipient. It supports a one-shot test-address-only restoration
+so the owner can repeat unsubscribe/deliverability tests without creating a general
+unsuppress mechanism for real prospects.
 """
 
 import json
@@ -21,6 +23,12 @@ SUPPRESSION_TEST_SEND_ON_STARTUP = legacy.os.environ.get(
 ).strip().lower() in {"1", "true", "yes"}
 SUPPRESSION_TEST_CHECK_ON_STARTUP = legacy.os.environ.get(
     "FN_SUPPRESSION_TEST_CHECK_ON_STARTUP", "false"
+).strip().lower() in {"1", "true", "yes"}
+SUPPRESSION_TEST_RESTORE_ON_STARTUP = legacy.os.environ.get(
+    "FN_SUPPRESSION_TEST_RESTORE_ON_STARTUP", "false"
+).strip().lower() in {"1", "true", "yes"}
+SUPPRESSION_TEST_LEAN_COPY = legacy.os.environ.get(
+    "FN_SUPPRESSION_TEST_LEAN_COPY", "false"
 ).strip().lower() in {"1", "true", "yes"}
 
 
@@ -49,6 +57,34 @@ def _test_state() -> dict:
         "domainSuppressed": domain_suppressed,
         "senderWouldBlock": bool(blocked),
     }
+
+
+def _lean_first_touch(profile_url: str):
+    """Owner-only A/B copy for testing Gmail placement; not production sequence copy."""
+    profile_url = str(profile_url or "").strip()
+    plain = (
+        "Hi Roger,\n\n"
+        "Franklin Navigator helps Franklin residents find and connect with local businesses and community resources.\n\n"
+        "We have a Franklin Navigator business profile available for you to review:\n"
+        f"View or claim your Franklin Navigator profile: {profile_url}\n\n"
+        "Claiming and managing your basic profile is free. No purchase is required. "
+        "If anything is wrong, factual corrections and profile-removal requests are free.\n\n"
+        "Optional Community Membership is designed to help increase your visibility in the Franklin community by giving your business a stronger Franklin Navigator presence and more ways for local residents to connect with you.\n\n"
+        "Questions? Reply to this email and we’ll be happy to help.\n\n"
+        "This is a commercial community-outreach email from Franklin Navigator."
+    )
+    html = (
+        "<p>Hi Roger,</p>"
+        "<p>Franklin Navigator helps Franklin residents find and connect with local businesses and community resources.</p>"
+        "<p>We have a Franklin Navigator business profile available for you to review:<br>"
+        f"<a href=\"{profile_url}\">View or claim your Franklin Navigator profile</a></p>"
+        "<p>Claiming and managing your basic profile is free. No purchase is required. "
+        "If anything is wrong, factual corrections and profile-removal requests are free.</p>"
+        "<p><strong>Optional Community Membership is designed to help increase your visibility in the Franklin community</strong> by giving your business a stronger Franklin Navigator presence and more ways for local residents to connect with you.</p>"
+        "<p>Questions? Reply to this email and we’ll be happy to help.</p>"
+        "<p>This is a commercial community-outreach email from Franklin Navigator.</p>"
+    )
+    return plain, html
 
 
 def send_suppression_test_preview_once():
@@ -83,8 +119,13 @@ def send_suppression_test_preview_once():
             # but make the greeting unmistakably owner-directed during testing.
             preview_recipient = dict(legacy.FIRST10_CONTACT_ROSTER[-1])
             preview_recipient["outreachGreeting"] = "Roger"
-            plain_body = legacy._render_direct_body(step.get("body") or "", preview_recipient)
-            html_body = legacy._render_direct_body(step.get("html_body") or "", preview_recipient)
+            if SUPPRESSION_TEST_LEAN_COPY:
+                plain_body, html_body = _lean_first_touch(preview_recipient.get("profileUrl") or "")
+                copy_variant = "LEAN_FIRST_TOUCH"
+            else:
+                plain_body = legacy._render_direct_body(step.get("body") or "", preview_recipient)
+                html_body = legacy._render_direct_body(step.get("html_body") or "", preview_recipient)
+                copy_variant = "CURRENT_INITIAL"
             message_id = legacy.send_franklin_smtp_message(
                 email_addr,
                 subject,
@@ -96,7 +137,13 @@ def send_suppression_test_preview_once():
         print(
             "SRE_BRIDGE SUPPRESSION_TEST_SEND SENT "
             + json.dumps(
-                {"to": email_addr, "testId": SUPPRESSION_TEST_ID, "messageId": message_id, "prospectSend": False},
+                {
+                    "to": email_addr,
+                    "testId": SUPPRESSION_TEST_ID,
+                    "messageId": message_id,
+                    "prospectSend": False,
+                    "copyVariant": copy_variant,
+                },
                 sort_keys=True,
             ),
             flush=True,
@@ -120,12 +167,81 @@ def check_suppression_test_once():
         return None
 
 
+def restore_suppression_test_address_once():
+    """Remove suppression markers for the single allowlisted owner test address only."""
+    try:
+        email_addr = _test_email()
+        before = _test_state()
+        if before.get("domainSuppressed"):
+            raise RuntimeError("SUPPRESSION_TEST_DOMAIN_BLOCKED_RESTORE_REFUSED")
+        deleted = 0
+        with legacy._imap_connect() as client:
+            legacy._ensure_suppression_mailbox(client)
+            status, _ = client.select(f'"{legacy.FN_SUPPRESSION_MAILBOX}"', readonly=False)
+            if status != "OK":
+                raise RuntimeError("SUPPRESSION_TEST_SUPPRESSION_MAILBOX_SELECT_FAILED")
+            status, data = client.search(None, "HEADER", "X-Franklin-Suppression-Email", email_addr)
+            if status != "OK":
+                raise RuntimeError("SUPPRESSION_TEST_RESTORE_SEARCH_FAILED")
+            ids = [x for x in (data[0] or b"").split() if x]
+            for msg_id in ids:
+                status2, msg_data = client.fetch(
+                    msg_id,
+                    '(BODY.PEEK[HEADER.FIELDS (X-FRANKLIN-SUPPRESSION-EMAIL)])',
+                )
+                if status2 != "OK":
+                    continue
+                raw = b"".join(
+                    part[1]
+                    for part in msg_data
+                    if isinstance(part, tuple) and isinstance(part[1], (bytes, bytearray))
+                )
+                if not raw:
+                    continue
+                msg = legacy.BytesParser(policy=legacy.email_policy.default).parsebytes(raw)
+                marker_email = str(msg.get("X-Franklin-Suppression-Email") or "").strip().lower()
+                if marker_email != email_addr:
+                    continue
+                store_status, _ = client.store(msg_id, "+FLAGS", "\\Deleted")
+                if store_status == "OK":
+                    deleted += 1
+            if deleted:
+                client.expunge()
+
+        after = _test_state()
+        if after.get("suppressed") or after.get("senderWouldBlock"):
+            raise RuntimeError("SUPPRESSION_TEST_RESTORE_DID_NOT_CLEAR_BLOCK")
+        result = {
+            "email": email_addr,
+            "deletedMarkers": deleted,
+            "before": before,
+            "after": after,
+            "testOnlyRestore": True,
+        }
+        print("SRE_BRIDGE SUPPRESSION_TEST_RESTORE " + json.dumps(result, sort_keys=True), flush=True)
+        return result
+    except Exception as exc:
+        print(f"SRE_BRIDGE SUPPRESSION_TEST_RESTORE ERROR {exc}", flush=True)
+        return None
+
+
 @legacy.app.on_event("startup")
 def suppression_test_startup():
-    if SUPPRESSION_TEST_SEND_ON_STARTUP and SUPPRESSION_TEST_CHECK_ON_STARTUP:
+    actions_requested = sum(
+        1
+        for enabled in (
+            SUPPRESSION_TEST_SEND_ON_STARTUP,
+            SUPPRESSION_TEST_CHECK_ON_STARTUP,
+            SUPPRESSION_TEST_RESTORE_ON_STARTUP,
+        )
+        if enabled
+    )
+    if actions_requested > 1:
         print("SRE_BRIDGE SUPPRESSION_TEST HOLD MULTIPLE_ACTIONS_REQUESTED", flush=True)
         return
     if SUPPRESSION_TEST_SEND_ON_STARTUP:
         legacy.threading.Thread(target=send_suppression_test_preview_once, daemon=True).start()
     elif SUPPRESSION_TEST_CHECK_ON_STARTUP:
         legacy.threading.Thread(target=check_suppression_test_once, daemon=True).start()
+    elif SUPPRESSION_TEST_RESTORE_ON_STARTUP:
+        legacy.threading.Thread(target=restore_suppression_test_address_once, daemon=True).start()
