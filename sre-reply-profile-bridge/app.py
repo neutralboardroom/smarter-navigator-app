@@ -27,6 +27,15 @@ _unsubscribe_ui = importlib.import_module("unsubscribe_ui")
 app = _legacy.app
 SRE_BRIDGE_RELEASE = _legacy.SRE_BRIDGE_RELEASE
 legacy = _legacy
+
+# Current v2.5.5 surfaces.
 _validate_direct_sequence_v255 = _active._validate_direct_sequence_v255
 _validate_growth_cohort = _active._validate_growth_cohort
 _growth_scan_once = _active._growth_scan_once
+
+# Preserve the existing v2.5 regression/test exports so the new growth layer does
+# not break already-qualified unsubscribe, copy, timing, and suppression checks.
+_validate_direct_sequence_v250 = _active._validate_direct_sequence_v255
+_step_due = _active.base._step_due
+_recipient_is_suppressed = _active.base._recipient_is_suppressed
+build_franklin_message_v250 = _active.base.build_franklin_message_v251
