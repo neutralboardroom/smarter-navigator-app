@@ -1,6 +1,6 @@
-"""Production entrypoint for the tested Franklin Navigator SRE outreach v2.5 layer.
+"""Production entrypoint for the tested Franklin Navigator SRE outreach layer.
 
-The preserved pre-v2.5 runtime lives in app_legacy.py. The candidate modules patch
+The preserved pre-v2.5 runtime lives in app_legacy.py. Candidate modules patch
 that preserved runtime in place, then this entrypoint exposes the same FastAPI app.
 """
 
@@ -12,7 +12,7 @@ import app_legacy as _legacy
 _entrypoint = sys.modules[__name__]
 sys.modules["app"] = _legacy
 try:
-    _active = importlib.import_module("app_v252")
+    _active = importlib.import_module("app_v255")
 finally:
     sys.modules["app"] = _entrypoint
 
@@ -27,7 +27,15 @@ _unsubscribe_ui = importlib.import_module("unsubscribe_ui")
 app = _legacy.app
 SRE_BRIDGE_RELEASE = _legacy.SRE_BRIDGE_RELEASE
 legacy = _legacy
-_validate_direct_sequence_v250 = _active._validate_direct_sequence_v250
-_step_due = _active._step_due
-_recipient_is_suppressed = _active._recipient_is_suppressed
-build_franklin_message_v250 = _active.build_franklin_message_v250
+
+# Current v2.5.5 surfaces.
+_validate_direct_sequence_v255 = _active._validate_direct_sequence_v255
+_validate_growth_cohort = _active._validate_growth_cohort
+_growth_scan_once = _active._growth_scan_once
+
+# Preserve the existing v2.5 regression/test exports so the new growth layer does
+# not break already-qualified unsubscribe, copy, timing, and suppression checks.
+_validate_direct_sequence_v250 = _active._validate_direct_sequence_v255
+_step_due = _active.base._step_due
+_recipient_is_suppressed = _active.base._recipient_is_suppressed
+build_franklin_message_v250 = _active.base.build_franklin_message_v251
