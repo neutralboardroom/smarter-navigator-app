@@ -1,0 +1,26 @@
+{
+  "schema": "sre.franklin.growth-cohort.v1",
+  "community": "FRANKLIN_TN",
+  "status": "HOLD_AWAITING_CERTIFICATION",
+  "generated_at": "2026-10-15T00:00:00Z",
+  "target_new_initials_per_business_day": 50,
+  "minimum_minutes_between_sends": 12,
+  "source": {
+    "local_release": "FR-NAV1.30.69-HF3.13.51",
+    "local_deploy": "dep-db83ueu89jmc73c3vsf0",
+    "local_usable_rows": 19,
+    "local_blocked_rows": 36,
+    "profile_factory_receipt": "PENDING",
+    "scc_activation_handoff": "PENDING"
+  },
+  "certification": {
+    "send_certified": false,
+    "certified_count": 0,
+    "suppression_rechecked": false,
+    "organization_domain_guards_rechecked": false,
+    "profile_claim_routes_rechecked": false,
+    "first10_outcome_handling_accepted": false,
+    "point_of_send_ready": false
+  },
+  "prospects": []
+}
