@@ -1,15 +1,15 @@
 {
   "schema": "sre.franklin.direct-outreach-sequence.v2",
-  "campaign_id": "FN-FIRST10-2026-09",
+  "campaign_id": "FN-GROWTH-2026-10",
   "sender": "Roger Gillman at Franklin Navigator <community@franklinnavigator.com>",
   "owner_bcc": "reachrgnow@gmail.com",
   "timezone": "America/Chicago",
   "send_window": {
     "weekdays": ["MO", "TU", "WE", "TH", "FR"],
-    "start": "09:00",
-    "end": "16:00",
+    "start": "08:00",
+    "end": "18:00",
     "minimum_minutes_between_sends": 12,
-    "max_daily_initial_sends": 10
+    "max_daily_initial_sends": 50
   },
   "stop_rules": {
     "any_reply_from_recipient": true,
@@ -63,8 +63,9 @@
     "The active sending path remains Zoho direct SMTP/IMAP. Legacy provider runtimes remain disabled.",
     "Every authorized production message BCCs reachrgnow@gmail.com through owner_bcc.",
     "Every message retains a visible isolated unsubscribe link plus RFC 8058 one-click headers, and open/click tracking remains off.",
-    "The outreach sequence intentionally stays short and human. It describes Community Membership only as optional paid membership designed to help increase local visibility; detailed paid-feature selling belongs on the verified product pages rather than in the cold-email sequence.",
+    "The outreach sequence intentionally stays short and human. It describes Community Membership only as optional paid membership designed to help increase local visibility; detailed paid-feature selling belongs on verified product pages rather than in the cold-email sequence.",
     "No message guarantees traffic, ranking, leads, customers, sales, revenue, attendance, or any other business outcome.",
-    "This copy update does not by itself authorize prospect sending or a volume increase."
+    "The prepared growth envelope is 50 new initial emails per Franklin business day, 08:00-18:00 America/Chicago, at least 12 minutes apart. Actual sending remains fail-closed until the certified growth cohort and point-of-send gates pass.",
+    "Automatic follow-ups are separately controlled and remain disabled until their own currentness/stop-signal gates pass."
   ]
 }
