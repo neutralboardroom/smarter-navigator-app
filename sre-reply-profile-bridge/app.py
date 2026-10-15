@@ -24,6 +24,9 @@ _suppression_test = importlib.import_module("suppression_test_tools")
 # one-click POST remains separate and unchanged.
 _unsubscribe_ui = importlib.import_module("unsubscribe_ui")
 
+# Optional one-shot read-only diagnostic. It never sends and is off by default.
+_point_of_send_diagnostic = importlib.import_module("point_of_send_diagnostic")
+
 app = _legacy.app
 SRE_BRIDGE_RELEASE = _legacy.SRE_BRIDGE_RELEASE
 legacy = _legacy
